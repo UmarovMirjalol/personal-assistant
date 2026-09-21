@@ -7,10 +7,6 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/**
- * CRITICAL: Telegram kills webhooks that take > ~60s.
- * ACK immediately, then process in the background (Node keeps the promise alive).
- */
 export async function POST(req: NextRequest) {
   const secret = getEnv().TELEGRAM_WEBHOOK_SECRET;
   if (secret) {
@@ -32,27 +28,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "invalid_update" }, { status: 400 });
   }
 
-  const update = parsed.data;
-  const debug = req.nextUrl.searchParams.get("debug") === "1";
-
-  // Fire-and-forget — must NOT await. Local Next + Vercel Node both keep this alive.
-  void (async () => {
-    try {
-      await processTelegramUpdate(update);
-    } catch (err) {
-      const chatId =
-        update.message?.chat.id ?? update.callback_query?.message?.chat.id;
-      if (chatId) {
-        try {
-          const { sendMessage } = await import("@/lib/telegram/client");
-          await sendMessage(chatId, "Секунду подтупил. Напиши ещё раз — я на связи.");
-        } catch {
-          // ignore
-        }
+  try {
+    // Await so work isn't cancelled when the response is sent (Next.js).
+    // Email path is now direct/fast; chat usually finishes well under 60s.
+    await processTelegramUpdate(parsed.data);
+  } catch {
+    const chatId =
+      parsed.data.message?.chat.id ?? parsed.data.callback_query?.message?.chat.id;
+    if (chatId) {
+      try {
+        const { sendMessage } = await import("@/lib/telegram/client");
+        await sendMessage(chatId, "Секунду подтупил. Напиши ещё раз — я на связи.");
+      } catch {
+        // ignore
       }
-      if (debug) console.error("telegram webhook handler failed", err);
     }
-  })();
+  }
 
   return NextResponse.json({ ok: true });
 }
