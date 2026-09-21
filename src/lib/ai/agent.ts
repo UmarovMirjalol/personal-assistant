@@ -13,6 +13,7 @@ import {
 } from "@/lib/db/users";
 import { appUrl } from "@/lib/env";
 import { isGmailConnected } from "@/lib/gmail";
+import { directEmailAnswer, isEmailQuestion } from "@/lib/gmail/direct";
 import { formatTasks, formatReminders, formatTodayPlan } from "@/lib/telegram/format";
 import { listTasks, getTodayPlan, createTask } from "@/lib/db/tasks";
 import { listReminders, createReminder } from "@/lib/db/reminders";
@@ -132,12 +133,22 @@ export async function handleUserMessage(opts: {
           maxSteps: 5,
         });
       } catch {
-        reply = await generateChat({
-          system: `${CHAT_SYSTEM}\n\n${gmailStatus}.${memoryBlock}\nСейчас действия недоступны — ответь по-человечески и предложи альтернативу без техжаргона.`,
-          messages: historyMsgs,
-          maxOutputTokens: 700,
-          temperature: 0.8,
-        });
+        // Never invent "mail is down" — hit Gmail directly for email asks
+        if (isEmailQuestion(text)) {
+          reply = await directEmailAnswer(user, text);
+        } else {
+          try {
+            reply = await generateChat({
+              system: `${CHAT_SYSTEM}\n\n${gmailStatus}.${memoryBlock}\nСейчас действия недоступны — ответь по-человечески без выдуманных фактов.`,
+              messages: historyMsgs,
+              maxOutputTokens: 700,
+              temperature: 0.8,
+            });
+          } catch {
+            reply =
+              "Сейчас AI тупит. Напиши «помощь» — или конкретнее: напомни / задача / что пришло.";
+          }
+        }
       }
     } else {
       reply = await generateChat({
@@ -214,6 +225,11 @@ async function tryFastPath(
       "",
       "Или команды: /today /tasks /emails /research",
     ].join("\n");
+  }
+
+  // Email — always direct Gmail, never depend on AI tools for this
+  if (isEmailQuestion(text)) {
+    return directEmailAnswer(user, text);
   }
 
   const remindMatch = text.match(/^(?:напомни|remind(?:\s+me)?)\s+(.+)$/i);

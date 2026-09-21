@@ -27,6 +27,7 @@ import { appUrl } from "@/lib/env";
 import { getDb, isDbConfigured } from "@/lib/db/client";
 import { localDb } from "@/lib/db/local-store";
 import { sendGmailReply, isGmailConnected } from "@/lib/gmail";
+import { directEmailAnswer, isEmailQuestion } from "@/lib/gmail/direct";
 import { parseRelativeTime } from "@/lib/reminders/time";
 import { executeTool } from "@/lib/ai/tools";
 
@@ -158,7 +159,7 @@ async function handleMessageInner(message: {
     });
     return;
   }
-  if (text === "/emails" || /^что\s+(важного\s+)?пришло/i.test(text) || /разбери.*(почт|письм)/i.test(text) || /какие\s+письм/i.test(text)) {
+  if (text === "/emails" || isEmailQuestion(text)) {
     if (!isGmailConnected(user)) {
       await sendMessage(
         message.chat.id,
@@ -169,50 +170,9 @@ async function handleMessageInner(message: {
     }
     try {
       void sendChatAction(message.chat.id, "typing");
-      const result = (await executeTool({ user, settings }, "get_emails", {
-        today_only: /сегодня|today/i.test(text) || text === "/emails",
-        analyze: true,
-        max: 8,
-      })) as {
-        digest?: string;
-        emails?: Array<{ id: string; priority: string; action_required: string }>;
-        error?: string;
-        connect_url?: string;
-        message?: string;
-      };
-      if (result.error) {
-        await sendMessage(
-          message.chat.id,
-          result.message ||
-            "Почту сейчас не открыть. Нажми Connect Gmail и заново разреши доступ.",
-          {
-            reply_markup: gmailConnectKeyboard(
-              result.connect_url || appUrl(`/connect?uid=${user.id}`)
-            ),
-          }
-        );
-        return;
-      }
-      await sendMessage(message.chat.id, result.digest ?? "Нет писем.");
-      // Only expand top 2 high-priority — keep replies snappy
-      const importants = (result.emails ?? [])
-        .filter((e) => e.priority === "high")
-        .slice(0, 2);
-      for (const e of importants) {
-        void sendChatAction(message.chat.id, "typing");
-        const detailed = await executeTool({ user, settings }, "get_email", {
-          email_id: e.id,
-        });
-        const formatted = (detailed as { formatted?: string }).formatted;
-        if (formatted) {
-          await sendMessage(message.chat.id, formatted, {
-            reply_markup: afterImportantKeyboard({
-              emailId: e.id,
-              showDraft: e.action_required !== "None",
-            }),
-          });
-        }
-      }
+      // Direct Gmail path — no AI-tool flakiness, real inbox answers
+      const reply = await directEmailAnswer(user, text);
+      await sendMessage(message.chat.id, reply);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "";
       await sendMessage(
