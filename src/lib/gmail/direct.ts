@@ -3,6 +3,7 @@ import { isGmailConnected, listRecentEmails } from "@/lib/gmail";
 import { analyzeAndStore } from "@/lib/gmail/analyze";
 import { heuristicAnalyze } from "@/lib/gmail/heuristic";
 import { appUrl } from "@/lib/env";
+import { escapeHtml } from "@/lib/telegram/html";
 
 /** Natural-language email asks — answer via Gmail API, not flaky AI tools. */
 export function isEmailQuestion(text: string): boolean {

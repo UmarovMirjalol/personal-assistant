@@ -1,4 +1,6 @@
 import type { EmailSummary, Task, Reminder } from "@/lib/db/client";
+import { escapeHtml, bold, formatCountdown, ruWhen } from "@/lib/telegram/html";
+import { isTimerReminder } from "@/lib/reminders/timers";
 
 const PRIORITY_ICON = {
   high: "🔴",
@@ -33,37 +35,33 @@ export function formatEmailNotification(input: {
 
   const wants = (input.summary.what_they_want ?? [])
     .filter(Boolean)
-    .map((w) => `• ${w}`)
+    .map((w) => `• ${escapeHtml(w)}`)
     .join("\n");
 
   const lines = [
-    `${icon} Новое письмо · ${urgency}`,
+    `${icon} ${bold(`Новое письмо · ${urgency}`)}`,
     "",
-    `От: ${from}`,
-    `Тема: ${input.subject ?? "(без темы)"}`,
+    `От: ${escapeHtml(from)}`,
+    `Тема: ${bold(input.subject ?? "(без темы)")}`,
     "",
-    `Суть: ${input.summary.purpose || input.summary.summary || "неясно"}`,
+    `<i>${escapeHtml(input.summary.purpose || input.summary.summary || "неясно")}</i>`,
   ];
 
   if (input.summary.summary && input.summary.summary !== input.summary.purpose) {
-    lines.push("", input.summary.summary);
+    lines.push("", escapeHtml(input.summary.summary));
   }
 
   if (wants) {
-    lines.push("", "Что хотят:", wants);
+    lines.push("", bold("Что хотят:"), wants);
   }
 
   const action = input.summary.action_required;
   if (action && action !== "None") {
-    lines.push("", `Действие: ${action}`);
+    lines.push("", `⚡ ${bold("Действие:")} ${escapeHtml(action)}`);
   }
 
   if (input.summary.deadline && input.summary.deadline !== "Not specified") {
-    lines.push(`Дедлайн: ${input.summary.deadline}`);
-  }
-
-  if (input.summary.uncertain) {
-    lines.push("", `Неуверен: ${input.summary.uncertain}`);
+    lines.push(`📅 Дедлайн: ${escapeHtml(input.summary.deadline)}`);
   }
 
   return lines.join("\n");
@@ -79,23 +77,21 @@ export function formatEmailDigest(
   }>
 ): string {
   const lines = [
-    "📬 EMAIL DIGEST",
+    "📬 " + bold("Почта"),
     "",
-    `${PRIORITY_ICON.high} ${counts.high} important`,
-    `${PRIORITY_ICON.medium} ${counts.medium} medium`,
-    `${PRIORITY_ICON.low} ${counts.low} low`,
+    `${PRIORITY_ICON.high} ${counts.high} важных · ${PRIORITY_ICON.medium} ${counts.medium} средних · ${PRIORITY_ICON.low} ${counts.low} прочих`,
   ];
 
   if (importants.length) {
-    lines.push("", "IMPORTANT:");
+    lines.push("", bold("На радаре:"));
     for (const e of importants.slice(0, 8)) {
       lines.push(
-        `${PRIORITY_ICON[e.priority]} ${e.from_name ?? "Unknown"} — ${e.subject ?? "(no subject)"}`
+        `${PRIORITY_ICON[e.priority]} ${escapeHtml(e.from_name ?? "Unknown")} — ${escapeHtml(e.subject ?? "(без темы)")}`
       );
-      if (e.purpose) lines.push(`   ${e.purpose}`);
+      if (e.purpose) lines.push(`   <i>${escapeHtml(e.purpose)}</i>`);
     }
   } else {
-    lines.push("", "Важных писем нет.");
+    lines.push("", "Важных писем нет — можно выдохнуть.");
   }
 
   return lines.join("\n");
@@ -106,29 +102,37 @@ export function formatTodayPlan(input: {
   dueToday: Task[];
   unscheduled: Task[];
 }): string {
-  const lines = ["☀️ TODAY", ""];
+  const lines = ["☀️ " + bold("Сегодня"), ""];
 
-  if (input.scheduled.length === 0 && input.dueToday.length === 0) {
+  if (input.scheduled.length === 0 && input.dueToday.length === 0 && input.unscheduled.length === 0) {
     lines.push("Пока пусто. Напиши план — разложу по слотам.");
+    return lines.join("\n");
   }
 
   for (const t of input.scheduled) {
     const start = t.scheduled_start ? formatTime(t.scheduled_start) : "??";
     const end = t.scheduled_end ? formatTime(t.scheduled_end) : "";
-    lines.push(end ? `${start}–${end} ${t.title}` : `${start} ${t.title}`);
+    lines.push(
+      end
+        ? `<code>${start}–${end}</code> ${escapeHtml(t.title)}`
+        : `<code>${start}</code> ${escapeHtml(t.title)}`
+    );
   }
 
   if (input.dueToday.length) {
-    lines.push("", "DEADLINES:");
+    lines.push("", bold("Дедлайны:"));
     for (const t of input.dueToday) {
-      lines.push(`• ${t.title}${t.due_at ? ` (до ${formatTime(t.due_at)})` : ""}`);
+      lines.push(
+        `• ${escapeHtml(t.title)}${t.due_at ? ` <i>(до ${formatTime(t.due_at)})</i>` : ""}`
+      );
     }
   }
 
   if (input.unscheduled.length) {
-    lines.push("", "OPEN TASKS:");
+    lines.push("", bold("Открытые задачи:"));
     for (const t of input.unscheduled.slice(0, 10)) {
-      lines.push(`• ${t.title}`);
+      const p = t.priority === "high" ? "🔴" : t.priority === "low" ? "⚪" : "🟡";
+      lines.push(`${p} ${escapeHtml(t.title)}`);
     }
   }
 
@@ -136,23 +140,50 @@ export function formatTodayPlan(input: {
 }
 
 export function formatTasks(tasks: Task[]): string {
-  if (!tasks.length) return "✅ Нет открытых задач.";
-  const lines = ["✅ TASKS", ""];
+  if (!tasks.length) return "✅ " + bold("Нет открытых задач") + "\n\nНапиши: <code>задача …</code>";
+  const lines = ["✅ " + bold("Задачи"), ""];
   for (const t of tasks) {
     const p = t.priority === "high" ? "🔴" : t.priority === "low" ? "⚪" : "🟡";
-    const due = t.due_at ? ` — до ${formatDate(t.due_at)}` : "";
-    lines.push(`${p} ${t.title}${due}`);
+    const due = t.due_at ? ` — до ${escapeHtml(formatDate(t.due_at))}` : "";
+    lines.push(`${p} ${escapeHtml(t.title)}${due}`);
   }
   return lines.join("\n");
 }
 
 export function formatReminders(reminders: Reminder[]): string {
-  if (!reminders.length) return "⏰ Нет активных напоминаний.";
-  const lines = ["⏰ REMINDERS", ""];
-  for (const r of reminders) {
-    lines.push(`• ${formatDateTime(r.remind_at)} — ${r.text}`);
+  const timers = reminders.filter(isTimerReminder);
+  const normal = reminders.filter((r) => !isTimerReminder(r));
+
+  if (!reminders.length) {
+    return (
+      "⏰ " +
+      bold("Пусто") +
+      "\n\n<code>напомни через 20 минут …</code>\n<code>таймер 10 минут</code>\n<code>помодоро</code>"
+    );
+  }
+
+  const lines: string[] = [];
+  if (timers.length) {
+    lines.push("⏱ " + bold("Таймеры"), "");
+    const now = Date.now();
+    for (const r of timers) {
+      const left = Math.max(0, Math.floor((new Date(r.remind_at).getTime() - now) / 1000));
+      const icon = (r.recurrence_rule ?? "").startsWith("pomodoro") ? "🍅" : "⏳";
+      lines.push(`${icon} ${escapeHtml(r.text)} — ${formatCountdown(left)}`);
+    }
+  }
+  if (normal.length) {
+    if (lines.length) lines.push("");
+    lines.push("⏰ " + bold("Напоминания"), "");
+    for (const r of normal) {
+      lines.push(`• <code>${escapeHtml(ruWhen(new Date(r.remind_at)))}</code> — ${escapeHtml(r.text)}`);
+    }
   }
   return lines.join("\n");
+}
+
+export function formatReminderFired(text: string): string {
+  return ["⏰ " + bold("Напоминание"), "", escapeHtml(text)].join("\n");
 }
 
 export function formatMorningBriefing(input: {
@@ -163,44 +194,123 @@ export function formatMorningBriefing(input: {
   priorities: string[];
 }): string {
   const lines = [
-    "☀️ GOOD MORNING",
+    "☀️ " + bold("Доброе утро"),
     "",
-    "TODAY",
-    `• ${input.taskCount} tasks`,
-    `• ${input.deadlineCount} deadline${input.deadlineCount === 1 ? "" : "s"}`,
-    `• ${input.importantEmailCount} important emails`,
+    bold("На сегодня:"),
+    `• ${input.taskCount} задач`,
+    `• ${input.deadlineCount} дедлайн${input.deadlineCount === 1 ? "" : "ов"}`,
+    `• ${input.importantEmailCount} важных писем`,
   ];
 
   if (input.importantEmails.length) {
-    lines.push("", "IMPORTANT EMAILS");
+    lines.push("", bold("Почта:"));
     for (const e of input.importantEmails.slice(0, 5)) {
-      lines.push(`• ${e.from} — ${e.subject}`);
+      lines.push(`• ${escapeHtml(e.from)} — ${escapeHtml(e.subject)}`);
     }
   }
 
   if (input.priorities.length) {
-    lines.push("", "TOP PRIORITIES");
+    lines.push("", bold("Приоритеты:"));
     input.priorities.slice(0, 5).forEach((p, i) => {
-      lines.push(`${i + 1}. ${p}`);
+      lines.push(`${i + 1}. ${escapeHtml(p)}`);
     });
   }
 
   return lines.join("\n");
 }
 
+export function formatWelcome(opts: {
+  name?: string;
+  gmail?: string | null;
+  connected: boolean;
+}): string {
+  const hi = opts.name ? `Йо, ${escapeHtml(opts.name.split(" ")[0]!)}.` : "Йо.";
+  return [
+    `✨ ${bold("Aether")} — твой личный AI`,
+    "",
+    hi + " Пиши как другу.",
+    "",
+    bold("Фишки:"),
+    "⏱ таймер / помодоро",
+    "⏰ напоминания",
+    "📧 умная почта",
+    "✅ задачи и план дня",
+    "🎲 реши за меня",
+    "📊 статус дня",
+    "",
+    opts.connected
+      ? `Gmail: <code>${escapeHtml(opts.gmail ?? "ok")}</code>`
+      : "Почту подключим, когда надо.",
+  ].join("\n");
+}
+
+export function formatHelp(): string {
+  return [
+    "✨ " + bold("Как со мной говорить"),
+    "",
+    bold("Таймеры"),
+    "• <code>таймер 10 минут</code>",
+    "• <code>таймер 25 чай</code>",
+    "• <code>помодоро</code>",
+    "• <code>таймеры</code> — список",
+    "",
+    bold("Напоминания"),
+    "• <code>напомни через 20 минут выйти</code>",
+    "• <code>напомни завтра в 16:00 …</code>",
+    "",
+    bold("Остальное"),
+    "• что у меня сегодня? / статус",
+    "• задача … / задачи",
+    "• что важного пришло?",
+    "• сделай research по …",
+    "• реши: а или б",
+    "• монетка",
+  ].join("\n");
+}
+
+export function formatStatusCard(input: {
+  tasks: number;
+  reminders: number;
+  timers: number;
+  nextReminder?: string | null;
+  gmailConnected: boolean;
+}): string {
+  return [
+    "📊 " + bold("Статус"),
+    "",
+    `✅ задач: <b>${input.tasks}</b>`,
+    `⏰ напоминаний: <b>${input.reminders}</b>`,
+    `⏱ таймеров: <b>${input.timers}</b>`,
+    input.nextReminder
+      ? `⏭ следующее: <i>${escapeHtml(input.nextReminder)}</i>`
+      : "⏭ следующего нет",
+    "",
+    input.gmailConnected ? "📧 Gmail на связи" : "📧 Gmail не подключён",
+  ].join("\n");
+}
+
+export function formatCoinFlip(side: "орёл" | "решка"): string {
+  return `🪙 ${bold("Монетка")}\n\nВыпало: <b>${side}</b>`;
+}
+
+export function formatDecide(options: string[], pick: string): string {
+  return [
+    "🎲 " + bold("Решаю за тебя"),
+    "",
+    ...options.map((o) => `• ${escapeHtml(o)}`),
+    "",
+    `Бери: ${bold(pick)}`,
+  ].join("\n");
+}
+
 function formatTime(iso: string): string {
   const d = new Date(iso);
-  return d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-GB", {
+  return new Date(iso).toLocaleDateString("ru-RU", {
     day: "2-digit",
     month: "short",
   });
-}
-
-function formatDateTime(iso: string): string {
-  const d = new Date(iso);
-  return `${formatDate(iso)} ${formatTime(iso)}`;
 }

@@ -15,20 +15,41 @@ import {
   gmailConnectKeyboard,
   draftReplyKeyboard,
   afterImportantKeyboard,
+  timerPresetsKeyboard,
+  timerRunningKeyboard,
+  welcomeKeyboard,
 } from "@/lib/telegram/keyboards";
 import {
   formatTasks,
   formatReminders,
   formatTodayPlan,
+  formatWelcome,
+  formatHelp,
 } from "@/lib/telegram/format";
+import { escapeHtml, ruWhen } from "@/lib/telegram/html";
 import { listTasks, getTodayPlan, createTask } from "@/lib/db/tasks";
-import { listReminders, createReminder } from "@/lib/db/reminders";
+import {
+  listReminders,
+  createReminder,
+  cancelReminder,
+  snoozeReminder,
+  getReminderByPrefix,
+} from "@/lib/db/reminders";
 import { appUrl } from "@/lib/env";
 import { getDb, isDbConfigured } from "@/lib/db/client";
 import { localDb } from "@/lib/db/local-store";
 import { sendGmailReply, isGmailConnected } from "@/lib/gmail";
 import { directEmailAnswer, isEmailQuestion } from "@/lib/gmail/direct";
 import { parseRelativeTime } from "@/lib/reminders/time";
+import {
+  startTimer,
+  listActiveTimers,
+  cancelTimer,
+  formatTimerStarted,
+  formatActiveTimers,
+  parseTimerCommand,
+} from "@/lib/reminders/timers";
+import { buildStatusCard } from "@/lib/telegram/features";
 import { executeTool } from "@/lib/ai/tools";
 
 type TgUser = {
@@ -124,26 +145,53 @@ async function handleMessageInner(message: {
 
   if (text === "/start" || isNew) {
     try {
-      const lines = [
-        "Йо. Я Aether — твой личный AI.",
-        "",
-        "Пиши как другу: вопрос, мысль, план, что угодно.",
-        "Если надо по делу — напомни / задача / почта / research.",
-        "",
-        isGmailConnected(user)
-          ? `Gmail: ${user.gmail_email ?? "подключён"}`
-          : "Почту пока не вижу — подключим, когда надо.",
-      ];
       const connectUrl = appUrl(`/connect?uid=${user.id}`);
-      await sendMessage(message.chat.id, lines.join("\n"), {
-        reply_markup: isGmailConnected(user)
-          ? undefined
-          : gmailConnectKeyboard(connectUrl),
-      });
+      const connected = isGmailConnected(user);
+      await sendMessage(
+        message.chat.id,
+        formatWelcome({
+          name: user.display_name ?? from.first_name,
+          gmail: user.gmail_email,
+          connected,
+        }),
+        {
+          reply_markup: welcomeKeyboard(connected ? undefined : { connectUrl }),
+        }
+      );
     } catch {
       await sendMessage(message.chat.id, "Йо, на связи. Пиши что угодно.");
     }
     if (text === "/start") return;
+  }
+
+  if (text === "/timers" || /^таймеры$/i.test(text.trim())) {
+    await sendMessage(
+      message.chat.id,
+      formatActiveTimers(await listActiveTimers(user.id)),
+      { reply_markup: timerPresetsKeyboard() }
+    );
+    return;
+  }
+
+  if (text === "/timer" || /^таймер$/i.test(text.trim())) {
+    await sendMessage(message.chat.id, "⏱ <b>Выбери таймер</b>", {
+      reply_markup: timerPresetsKeyboard(),
+    });
+    return;
+  }
+
+  if (text === "/status" || /^статус$/i.test(text.trim())) {
+    await sendMessage(message.chat.id, await buildStatusCard(user), {
+      reply_markup: mainMenuKeyboard(),
+    });
+    return;
+  }
+
+  if (text === "/help" || /^помощь$/i.test(text.trim())) {
+    await sendMessage(message.chat.id, formatHelp(), {
+      reply_markup: mainMenuKeyboard(),
+    });
+    return;
   }
 
   // Slash shortcuts
@@ -244,14 +292,27 @@ async function handleMessageInner(message: {
   try {
     const reply = await handleUserMessage({ user, settings, text });
     const lower = text.toLowerCase();
-    // Don't spam menu on every chat reply — only when asked
-    const showMenu =
+    const timerId = reply.match(/<!--timer:([a-f0-9-]+)-->/i)?.[1];
+    const cleanReply = reply.replace(/\n?<!--timer:[a-f0-9-]+-->/gi, "").trim();
+
+    let replyMarkup = undefined;
+    if (timerId) {
+      replyMarkup = timerRunningKeyboard(timerId);
+    } else if (
       lower.includes("меню") ||
       lower === "помощь" ||
       lower === "help" ||
-      lower.startsWith("/help");
-    await sendMessage(message.chat.id, reply, {
-      reply_markup: showMenu ? mainMenuKeyboard() : undefined,
+      lower.startsWith("/help") ||
+      parseTimerCommand(text)
+    ) {
+      replyMarkup = parseTimerCommand(text)
+        ? timerPresetsKeyboard()
+        : mainMenuKeyboard();
+    }
+
+    // If we just started a timer via fast-path without marker, still ok
+    await sendMessage(message.chat.id, cleanReply, {
+      reply_markup: replyMarkup,
     });
   } catch {
     try {
@@ -292,7 +353,7 @@ async function handleCallback(cq: {
   const { user, settings } = userPack;
 
   if (data === "menu:home") {
-    await sendMessage(chatId, "Меню:", { reply_markup: mainMenuKeyboard() });
+    await sendMessage(chatId, "✨ <b>Меню</b>", { reply_markup: mainMenuKeyboard() });
     return;
   }
   if (data === "menu:today") {
@@ -313,8 +374,29 @@ async function handleCallback(cq: {
     });
     return;
   }
+  if (data === "menu:timers" || data === "menu:timer_presets") {
+    if (data === "menu:timer_presets") {
+      await sendMessage(chatId, "⏱ <b>Выбери таймер</b>", {
+        reply_markup: timerPresetsKeyboard(),
+      });
+      return;
+    }
+    await sendMessage(chatId, formatActiveTimers(await listActiveTimers(user.id)), {
+      reply_markup: timerPresetsKeyboard(),
+    });
+    return;
+  }
+  if (data === "menu:status") {
+    await sendMessage(chatId, await buildStatusCard(user), {
+      reply_markup: mainMenuKeyboard(),
+    });
+    return;
+  }
   if (data === "menu:research") {
-    await sendMessage(chatId, "Напиши тему: «сделай research по …» или /research …");
+    await sendMessage(
+      chatId,
+      "🔬 Напиши тему: <code>сделай research по …</code> или /research …"
+    );
     return;
   }
   if (data === "menu:emails") {
@@ -326,6 +408,96 @@ async function handleCallback(cq: {
     });
     return;
   }
+
+  // timer:start:25 or timer:start:25:pomodoro
+  if (data.startsWith("timer:start:")) {
+    const parts = data.split(":");
+    const mins = Number(parts[2] || 10);
+    const pomodoro = parts[3] === "pomodoro";
+    const { reminder, endsAt } = await startTimer(user, {
+      seconds: Math.max(1, mins) * 60,
+      label: pomodoro ? `Помодоро ${mins} мин` : `Таймер ${mins} мин`,
+      kind: pomodoro ? "pomodoro" : "timer",
+    });
+    await sendMessage(
+      chatId,
+      formatTimerStarted({
+        label: reminder.text,
+        endsAt,
+        seconds: mins * 60,
+        kind: pomodoro ? "pomodoro" : "timer",
+      }),
+      { reply_markup: timerRunningKeyboard(reminder.id) }
+    );
+    return;
+  }
+
+  if (data.startsWith("timer:cancel:")) {
+    const prefix = data.replace("timer:cancel:", "");
+    const n = await cancelTimer(user.id, prefix);
+    await sendMessage(
+      chatId,
+      n > 0 ? "⏹ Таймер снят." : "Таймер уже не активен."
+    );
+    return;
+  }
+
+  if (data.startsWith("timer:extend:")) {
+    const [, , prefix, minsRaw] = data.split(":");
+    const mins = Number(minsRaw || 5);
+    const existing = await getReminderByPrefix(user.id, prefix);
+    if (!existing) {
+      await sendMessage(chatId, "Таймер не найден — поставь новый.");
+      return;
+    }
+    await cancelReminder(user.id, existing.id);
+    const left = Math.max(
+      0,
+      Math.floor((new Date(existing.remind_at).getTime() - Date.now()) / 1000)
+    );
+    const { reminder, endsAt } = await startTimer(user, {
+      seconds: left + mins * 60,
+      label: existing.text,
+      kind: (existing.recurrence_rule ?? "").startsWith("pomodoro")
+        ? "pomodoro"
+        : "timer",
+    });
+    await sendMessage(
+      chatId,
+      formatTimerStarted({
+        label: reminder.text,
+        endsAt,
+        seconds: left + mins * 60,
+        kind: (existing.recurrence_rule ?? "").startsWith("pomodoro")
+          ? "pomodoro"
+          : "timer",
+      }),
+      { reply_markup: timerRunningKeyboard(reminder.id) }
+    );
+    return;
+  }
+
+  if (data.startsWith("rem:snooze:")) {
+    const [, , prefix, minsRaw] = data.split(":");
+    const mins = Number(minsRaw || 5);
+    const rem = await snoozeReminder(user.id, prefix, mins);
+    await sendMessage(
+      chatId,
+      `⏰ Ок, ещё раз в <b>${escapeHtml(ruWhen(new Date(rem.remind_at)))}</b>\n▸ ${escapeHtml(rem.text)}`
+    );
+    return;
+  }
+
+  if (data.startsWith("rem:done:")) {
+    const prefix = data.replace("rem:done:", "");
+    const existing = await getReminderByPrefix(user.id, prefix);
+    if (existing && existing.status === "pending") {
+      await cancelReminder(user.id, existing.id);
+    }
+    await sendMessage(chatId, "✓ Готово, закрыл.");
+    return;
+  }
+
   if (data === "menu:settings" || data.startsWith("settings:")) {
     await handleSettings(user.id, chatId, data, cq.message?.message_id);
     return;
@@ -429,12 +601,12 @@ async function handleSettings(
   }
 
   const text = [
-    "⚙️ SETTINGS",
+    "⚙️ <b>Настройки</b>",
     "",
-    `Morning briefing: ${settings.morning_briefing_enabled ? "ON" : "OFF"} (hour ${settings.morning_briefing_hour})`,
-    `Email notify threshold: ${settings.notify_email_priority.toUpperCase()}`,
+    `Утренний брифинг: <b>${settings.morning_briefing_enabled ? "ON" : "OFF"}</b> (час ${settings.morning_briefing_hour})`,
+    `Письма от: <b>${settings.notify_email_priority.toUpperCase()}</b>`,
     "",
-    "Переключатели ниже.",
+    "Тыкай кнопки ниже.",
   ].join("\n");
 
   if (messageId && data.startsWith("settings:")) {

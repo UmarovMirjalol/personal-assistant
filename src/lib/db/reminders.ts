@@ -108,6 +108,33 @@ export async function cancelReminder(userId: string, idOrText: string): Promise<
   return data.length;
 }
 
+export async function getReminderByPrefix(
+  userId: string,
+  prefix: string
+): Promise<Reminder | null> {
+  const pending = await listReminders(userId, "pending");
+  const all = await listReminders(userId, "all");
+  const pool = [...pending, ...all.filter((r) => r.status === "sent")];
+  return (
+    pool.find((r) => r.id === prefix || r.id.startsWith(prefix)) ?? null
+  );
+}
+
+export async function snoozeReminder(
+  userId: string,
+  reminderId: string,
+  minutes: number
+): Promise<Reminder> {
+  const existing = await getReminderByPrefix(userId, reminderId);
+  const text = existing?.text ?? "Напоминание";
+  const at = new Date(Date.now() + minutes * 60_000);
+  return createReminder({
+    userId,
+    text,
+    remindAt: at.toISOString(),
+  });
+}
+
 export async function dueReminders(now = new Date()): Promise<Reminder[]> {
   if (useLocal()) return localDb.dueReminders(now.toISOString());
 

@@ -14,10 +14,30 @@ import {
 import { appUrl } from "@/lib/env";
 import { isGmailConnected } from "@/lib/gmail";
 import { directEmailAnswer, isEmailQuestion } from "@/lib/gmail/direct";
-import { formatTasks, formatReminders, formatTodayPlan } from "@/lib/telegram/format";
+import {
+  formatTasks,
+  formatReminders,
+  formatTodayPlan,
+  formatHelp,
+} from "@/lib/telegram/format";
+import { escapeHtml, ruWhen } from "@/lib/telegram/html";
 import { listTasks, getTodayPlan, createTask } from "@/lib/db/tasks";
 import { listReminders, createReminder } from "@/lib/db/reminders";
 import { parseRelativeTime } from "@/lib/reminders/time";
+import {
+  parseTimerCommand,
+  startTimer,
+  listActiveTimers,
+  cancelTimer,
+  formatTimerStarted,
+  formatActiveTimers,
+} from "@/lib/reminders/timers";
+import {
+  buildStatusCard,
+  decideForMe,
+  isStatusCommand,
+  coinFlip,
+} from "@/lib/telegram/features";
 import { runResearch } from "@/lib/research/search";
 
 const CHAT_SYSTEM = `Ты — личный AI-помощник в Telegram. Можно звать Aether.
@@ -32,6 +52,7 @@ const CHAT_SYSTEM = `Ты — личный AI-помощник в Telegram. Мо
 - если чего-то не знаешь — скажи прямо, без оправданий.
 
 Ты можешь просто болтать: учёба, жизнь, решения, идеи, код, что угодно.
+Умеешь таймеры (таймер 10 минут / помодоро), напоминания, задачи, почту, research.
 НЕ лезь в почту, задачи, напоминания и поиск, пока человек сам об этом не попросил.
 Не выдумывай факты из почты или интернета. Не начинай «сейчас гляну почту» без запроса.`;
 
@@ -40,6 +61,7 @@ const TOOL_SYSTEM = `${CHAT_SYSTEM}
 Когда человек ЯВНО просит действие — используй tools:
 - почта / письма → get_emails / search_emails / get_email
 - напоминания → create_reminder
+- таймер / помодоро → create_reminder с коротким when (через N минут)
 - задачи / план дня → create_task / set_day_plan / get_today_plan
 - research / поиск → research / web_search
 - черновик ответа на письмо → draft_email (никогда не отправляй сам)
@@ -52,6 +74,7 @@ const TOOL_SYSTEM = `${CHAT_SYSTEM}
 function needsTools(text: string): boolean {
   const t = text.trim();
   if (t.length < 2) return false;
+  if (parseTimerCommand(t)) return false; // handled by fast path
   return /(?:почт|письм|email|gmail|inbox|инбокс)|(?:напомин|remind)|(?:задач|todo|deadline|дедлайн)|(?:план\s+на\s+(?:день|сегодня|завтра)|что\s+у\s+меня\s+сегодня)|(?:research|погугли|найди\s+(?:в\s+интернете|информац)|разбер(?:и|ить)?\s+(?:почт|письм)|что\s+(?:важного\s+)?пришло)|(?:draft|черновик|ответ(?:ь|ить)?\s+на\s+письм)|(?:создай\s+задач|добавь\s+задач)|(?:через\s+\d+\s*(?:мин|час|час|дн))/i.test(
     t
   );
@@ -211,20 +234,43 @@ async function tryFastPath(
     return formatReminders(await listReminders(user.id));
   }
 
+  if (/^(\/timers|таймеры|мои таймеры)$/i.test(t)) {
+    return formatActiveTimers(await listActiveTimers(user.id));
+  }
+
+  if (isStatusCommand(text) || t === "/status") {
+    return buildStatusCard(user);
+  }
+
+  if (/^(монетка|подбрось|flip)$/i.test(t)) {
+    return coinFlip();
+  }
+
+  const decided = decideForMe(text);
+  if (decided) return decided;
+
   if (/^\/help$/.test(t) || t === "help" || t === "помощь") {
-    return [
-      "Пиши как человеку — можем просто поболтать.",
-      "",
-      "Если по делу:",
-      "• что у меня сегодня?",
-      "• напомни завтра в 16:00 …",
-      "• через 2 часа напомни …",
-      "• задача …",
-      "• что важного пришло? / разбери почту",
-      "• сделай research по …",
-      "",
-      "Или команды: /today /tasks /emails /research",
-    ].join("\n");
+    return formatHelp();
+  }
+
+  // Timers — before generic reminders
+  const timerCmd = parseTimerCommand(text);
+  if (timerCmd) {
+    const { reminder, endsAt } = await startTimer(user, timerCmd);
+    return (
+      formatTimerStarted({
+        label: timerCmd.label,
+        endsAt,
+        seconds: timerCmd.seconds,
+        kind: timerCmd.kind,
+      }) + `\n<!--timer:${reminder.id}-->`
+    );
+  }
+
+  if (/^(отмен(?:и|ить)\s+таймер|cancel\s+timer)(?:\s+(.+))?$/i.test(text.trim())) {
+    const q = text.replace(/^(отмен(?:и|ить)\s+таймер|cancel\s+timer)\s*/i, "").trim() || "";
+    const n = await cancelTimer(user.id, q || "таймер");
+    return n > 0 ? `Ок, снял таймер${n > 1 ? `ы (${n})` : ""}.` : "Активного таймера не нашёл.";
   }
 
   // Email — always direct Gmail, never depend on AI tools for this
@@ -249,13 +295,40 @@ async function tryFastPath(
       text: body || rest,
       remindAt: at.toISOString(),
     });
-    return `Ок, напомню ${at.toLocaleString("ru-RU")}: ${reminder.text}`;
+    return [
+      "⏰ <b>Напоминание поставлено</b>",
+      "",
+      `▸ ${escapeHtml(reminder.text)}`,
+      `▸ ${escapeHtml(ruWhen(at))}`,
+    ].join("\n");
+  }
+
+  // "через 10 минут выйти" without напомни
+  const throughMatch = text.match(
+    /^(?:через|in)\s+(\d+)\s*(минут[уы]?|мин|hours?|час(?:а|ов)?|ч|сек(?:унд[ыуа]?)?)\s+(.+)$/i
+  );
+  if (throughMatch && !/таймер|timer/i.test(text)) {
+    const at = parseRelativeTime(
+      `через ${throughMatch[1]} ${throughMatch[2]}`,
+      user.timezone
+    );
+    const reminder = await createReminder({
+      userId: user.id,
+      text: throughMatch[3].trim(),
+      remindAt: at.toISOString(),
+    });
+    return [
+      "⏰ <b>Напомню</b>",
+      "",
+      `▸ ${escapeHtml(reminder.text)}`,
+      `▸ ${escapeHtml(ruWhen(at))}`,
+    ].join("\n");
   }
 
   const taskMatch = text.match(/^(?:задача|добавь задачу|todo)\s*[:\-]?\s*(.+)$/i);
   if (taskMatch) {
     const task = await createTask({ userId: user.id, title: taskMatch[1].trim() });
-    return `Записал: ${task.title}`;
+    return `✅ Записал: <b>${escapeHtml(task.title)}</b>`;
   }
 
   const researchMatch = text.match(

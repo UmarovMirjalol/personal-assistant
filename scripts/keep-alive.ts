@@ -24,6 +24,7 @@ const APP_URL =
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const EMAIL_EVERY_MS = Number(process.env.EMAIL_POLL_INTERVAL_MS || 60_000);
 const REFRESH_EVERY_MS = Number(process.env.GMAIL_REFRESH_INTERVAL_MS || 10 * 60_000);
+const REMINDERS_EVERY_MS = Number(process.env.REMINDERS_POLL_INTERVAL_MS || 30_000);
 
 async function refreshViaVercel() {
   if (!CRON_SECRET) return;
@@ -47,6 +48,24 @@ async function refreshViaVercel() {
   }
 }
 
+async function pollReminders() {
+  if (!CRON_SECRET) return;
+  try {
+    const res = await fetch(
+      `${APP_URL}/api/cron/reminders?secret=${encodeURIComponent(CRON_SECRET)}`,
+      { signal: AbortSignal.timeout(40_000) }
+    );
+    const text = await res.text();
+    console.log(new Date().toISOString(), "reminders", res.status, text.slice(0, 180));
+  } catch (err) {
+    console.error(
+      new Date().toISOString(),
+      "reminders fail",
+      err instanceof Error ? err.message : err
+    );
+  }
+}
+
 async function pollLocal() {
   try {
     const { processAllConnectedUsers } = await import("../src/lib/gmail/sync");
@@ -62,11 +81,18 @@ async function pollLocal() {
 }
 
 async function main() {
-  console.log("keep-alive started", { APP_URL, EMAIL_EVERY_MS, REFRESH_EVERY_MS });
+  console.log("keep-alive started", {
+    APP_URL,
+    EMAIL_EVERY_MS,
+    REFRESH_EVERY_MS,
+    REMINDERS_EVERY_MS,
+  });
   await refreshViaVercel();
+  await pollReminders();
   await pollLocal();
   setInterval(() => void pollLocal(), EMAIL_EVERY_MS);
   setInterval(() => void refreshViaVercel(), REFRESH_EVERY_MS);
+  setInterval(() => void pollReminders(), REMINDERS_EVERY_MS);
 }
 
 main().catch((e) => {

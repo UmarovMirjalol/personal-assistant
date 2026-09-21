@@ -1,8 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getEnv } from "@/lib/env";
-import { dueReminders, markReminderSent } from "@/lib/db/reminders";
+import { dueReminders, markReminderSent, createReminder } from "@/lib/db/reminders";
 import { getDb, isDbConfigured } from "@/lib/db/client";
 import { sendMessage } from "@/lib/telegram/client";
+import { formatReminderFired } from "@/lib/telegram/format";
+import {
+  formatTimerFired,
+  isTimerReminder,
+  POMODORO_BREAK,
+} from "@/lib/reminders/timers";
+import {
+  reminderFiredKeyboard,
+  timerFiredKeyboard,
+} from "@/lib/telegram/keyboards";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -27,6 +37,7 @@ export async function GET(req: NextRequest) {
   const due = await dueReminders();
   const db = getDb();
   let sent = 0;
+  let timers = 0;
 
   for (const reminder of due) {
     const { data: user } = await db
@@ -36,7 +47,28 @@ export async function GET(req: NextRequest) {
       .maybeSingle();
     if (!user) continue;
     try {
-      await sendMessage(user.telegram_id, `⏰ Reminder\n\n${reminder.text}`);
+      const isTimer = isTimerReminder(reminder);
+      if (isTimer) {
+        const pomodoro = (reminder.recurrence_rule ?? "").startsWith("pomodoro");
+        await sendMessage(user.telegram_id, formatTimerFired(reminder), {
+          reply_markup: timerFiredKeyboard({ pomodoro }),
+        });
+        // Auto-offer break after pomodoro work
+        if (reminder.recurrence_rule === "pomodoro:work") {
+          const breakAt = new Date(Date.now() + 5 * 60_000);
+          await createReminder({
+            userId: reminder.user_id,
+            text: "Перерыв после помодоро",
+            remindAt: breakAt.toISOString(),
+            recurrenceRule: POMODORO_BREAK,
+          });
+        }
+        timers += 1;
+      } else {
+        await sendMessage(user.telegram_id, formatReminderFired(reminder.text), {
+          reply_markup: reminderFiredKeyboard(reminder.id),
+        });
+      }
       await markReminderSent(reminder);
       sent += 1;
     } catch {
@@ -44,7 +76,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, checked: due.length, sent });
+  return NextResponse.json({ ok: true, checked: due.length, sent, timers });
 }
 
 export async function POST(req: NextRequest) {
