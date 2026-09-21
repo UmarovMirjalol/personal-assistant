@@ -108,6 +108,15 @@ async function tryFastPath(
 ): Promise<string | null> {
   const t = text.trim().toLowerCase();
 
+  // Greetings — never need Gemini
+  if (
+    /^(салам|салому алейкум|привет|здравствуй|здравствуйте|хай|hello|hi|hey|yo)[\s!.]*$/i.test(
+      t
+    )
+  ) {
+    return "Привет. Чем помочь? Могу задачи, reminders, план дня, почту или research.\nНапиши «помощь» для примеров.";
+  }
+
   if (
     /^(что\s+у\s+меня\s+сегодня|план\s+на\s+сегодня|\/today|сегодня\??)$/i.test(t) ||
     t === "today"

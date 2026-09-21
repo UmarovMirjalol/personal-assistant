@@ -66,8 +66,13 @@ async function handleMessage(message: {
   from?: TgUser;
 }) {
   const from = message.from!;
-  const text = sanitizeUserText(message.text ?? "");
+  let text = sanitizeUserText(message.text ?? "");
   if (!text) return;
+
+  // Common typos
+  if (/^\/satrt\b/i.test(text) || /^\/strat\b/i.test(text)) {
+    text = "/start";
+  }
 
   const rl = await checkRateLimit(`tg:${from.id}`, 40, 60_000);
   if (!rl.allowed) {
@@ -216,11 +221,14 @@ async function handleMessage(message: {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown";
-    // Never leak secrets
-    await sendMessage(
-      message.chat.id,
-      `Что-то сломалось: ${msg.includes("API") || msg.includes("key") ? "проверь конфигурацию API" : "попробуй ещё раз"}.`
-    );
+    const friendly = /503|high demand|unavailable|overloaded/i.test(msg)
+      ? "Gemini сейчас перегружен. Попробуй ещё раз через минуту — простые команды (/start, помощь, напомни…) работают всегда."
+      : `Не смог ответить: ${msg.includes("API") || msg.includes("key") || msg.includes("GEMINI") ? "проблема с AI API, попробуй ещё раз" : msg.slice(0, 180)}`;
+    try {
+      await sendMessage(message.chat.id, friendly);
+    } catch {
+      // ignore
+    }
   }
 }
 

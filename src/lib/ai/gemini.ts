@@ -18,23 +18,45 @@ export function isGeminiConfigured() {
   return Boolean(getEnv().GEMINI_API_KEY);
 }
 
+function modelName() {
+  return getEnv().GEMINI_MODEL || "gemini-3.6-flash";
+}
+
+async function withRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      const retryable = /503|429|high demand|unavailable|overloaded|try again/i.test(msg);
+      if (!retryable || i === attempts - 1) throw err;
+      await new Promise((r) => setTimeout(r, 800 * (i + 1)));
+    }
+  }
+  throw lastErr;
+}
+
 export async function generateText(opts: {
   system: string;
   prompt: string;
   maxOutputTokens?: number;
 }): Promise<string> {
-  const model = getClient().getGenerativeModel({
-    model: getEnv().GEMINI_MODEL || "gemini-3.6-flash",
-    systemInstruction: opts.system,
+  return withRetry(async () => {
+    const model = getClient().getGenerativeModel({
+      model: modelName(),
+      systemInstruction: opts.system,
+    });
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: opts.prompt }] }],
+      generationConfig: {
+        maxOutputTokens: opts.maxOutputTokens ?? 1024,
+        temperature: 0.4,
+      },
+    });
+    return result.response.text().trim();
   });
-  const result = await model.generateContent({
-    contents: [{ role: "user", parts: [{ text: opts.prompt }] }],
-    generationConfig: {
-      maxOutputTokens: opts.maxOutputTokens ?? 1024,
-      temperature: 0.4,
-    },
-  });
-  return result.response.text().trim();
 }
 
 export async function generateJson<T>(opts: {
@@ -75,55 +97,57 @@ export async function runWithTools(opts: {
   executeTool: (name: string, args: Record<string, unknown>) => Promise<unknown>;
   maxSteps?: number;
 }): Promise<string> {
-  const genAI = getClient();
-  const tool: Tool = { functionDeclarations: opts.tools };
+  return withRetry(async () => {
+    const genAI = getClient();
+    const tool: Tool = { functionDeclarations: opts.tools };
 
-  const model = genAI.getGenerativeModel({
-    model: getEnv().GEMINI_MODEL || "gemini-3.6-flash",
-    systemInstruction: opts.system,
-    tools: [tool],
-  });
+    const model = genAI.getGenerativeModel({
+      model: modelName(),
+      systemInstruction: opts.system,
+      tools: [tool],
+    });
 
-  const chat = model.startChat({
-    history: opts.messages.slice(0, -1).map((m) => ({
-      role: m.role,
-      parts: [{ text: m.text }],
-    })),
-  });
+    const chat = model.startChat({
+      history: opts.messages.slice(0, -1).map((m) => ({
+        role: m.role,
+        parts: [{ text: m.text }],
+      })),
+    });
 
-  const last = opts.messages[opts.messages.length - 1]?.text ?? "";
-  let result = await chat.sendMessage(last);
-  const maxSteps = opts.maxSteps ?? 5;
+    const last = opts.messages[opts.messages.length - 1]?.text ?? "";
+    let result = await chat.sendMessage(last);
+    const maxSteps = opts.maxSteps ?? 5;
 
-  for (let step = 0; step < maxSteps; step++) {
-    const calls = result.response.functionCalls();
-    if (!calls?.length) {
-      return result.response.text().trim();
-    }
-
-    const responseParts = [];
-    for (const call of calls) {
-      let toolResult: unknown;
-      try {
-        toolResult = await opts.executeTool(
-          call.name,
-          (call.args ?? {}) as Record<string, unknown>
-        );
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "tool_error";
-        toolResult = { error: message };
+    for (let step = 0; step < maxSteps; step++) {
+      const calls = result.response.functionCalls();
+      if (!calls?.length) {
+        return result.response.text().trim();
       }
-      responseParts.push({
-        functionResponse: {
-          name: call.name,
-          response: { result: toolResult },
-        },
-      });
-    }
-    result = await chat.sendMessage(responseParts);
-  }
 
-  return result.response.text().trim() || "Готово.";
+      const responseParts = [];
+      for (const call of calls) {
+        let toolResult: unknown;
+        try {
+          toolResult = await opts.executeTool(
+            call.name,
+            (call.args ?? {}) as Record<string, unknown>
+          );
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "tool_error";
+          toolResult = { error: message };
+        }
+        responseParts.push({
+          functionResponse: {
+            name: call.name,
+            response: { result: toolResult },
+          },
+        });
+      }
+      result = await chat.sendMessage(responseParts);
+    }
+
+    return result.response.text().trim() || "Готово.";
+  });
 }
 
 export { SchemaType };

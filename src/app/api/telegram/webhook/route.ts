@@ -30,7 +30,23 @@ export async function POST(req: NextRequest) {
 
   try {
     await processTelegramUpdate(parsed.data);
-  } catch {
+  } catch (err) {
+    const chatId =
+      parsed.data.message?.chat.id ?? parsed.data.callback_query?.message?.chat.id;
+    if (chatId) {
+      try {
+        const { sendMessage } = await import("@/lib/telegram/client");
+        const msg = err instanceof Error ? err.message : "unknown";
+        await sendMessage(
+          chatId,
+          /503|high demand|unavailable/i.test(msg)
+            ? "AI временно недоступен (перегрузка). Напиши /start или «помощь»."
+            : "Внутренняя ошибка бота. Попробуй ещё раз."
+        );
+      } catch {
+        // ignore
+      }
+    }
     return NextResponse.json({ ok: true });
   }
 
