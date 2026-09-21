@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+:root {
+  --bg0: #0c1210;
+  --bg1: #14201a;
+  --bg2: #1c2e24;
+  --ink: #e8f0ea;
+  --muted: #9bb0a3;
+  --accent: #7dffb3;
+  --accent-dim: #3d8f64;
+  --warn: #f0c674;
+  --danger: #ff7b72;
+  --card: rgba(255, 255, 255, 0.04);
+  --stroke: rgba(125, 255, 179, 0.18);
+}
+
+@theme inline {
+  --font-sans: var(--font-sans);
+  --font-display: var(--font-display);
+  --color-background: var(--bg0);
+  --color-foreground: var(--ink);
+}
+
+body {
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(61, 143, 100, 0.35), transparent 55%),
+    radial-gradient(900px 500px at 90% 0%, rgba(125, 255, 179, 0.12), transparent 50%),
+    linear-gradient(180deg, var(--bg1), var(--bg0) 45%, #0a0f0d);
+  color: var(--ink);
+  min-height: 100vh;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+.animate-rise {
+  animation: rise 0.7s ease-out both;
+}
+
+.animate-rise-delay {
+  animation: rise 0.8s ease-out 0.12s both;
+}
+
+.glow-dot {
+  animation: pulse-soft 3.2s ease-in-out infinite;
+}
