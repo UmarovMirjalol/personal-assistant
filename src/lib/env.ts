@@ -1,5 +1,5 @@
 export type AppEnv = {
-  NEXT_PUBLIC_APP_URL?: string;
+  APP_URL?: string;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_ALLOWED_USER_IDS: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
@@ -9,7 +9,7 @@ export type AppEnv = {
   GMAIL_PUBSUB_TOPIC?: string;
   GEMINI_API_KEY?: string;
   GEMINI_MODEL: string;
-  NEXT_PUBLIC_SUPABASE_URL?: string;
+  SUPABASE_URL?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
   TOKEN_ENCRYPTION_KEY?: string;
   CRON_SECRET?: string;
@@ -37,12 +37,14 @@ let cached: AppEnv | null = null;
 
 /**
  * Never throws. Invalid/empty env values become undefined.
- * This must stay safe during `next build` prerender.
+ * Prefers APP_URL / SUPABASE_URL (server-only) over NEXT_PUBLIC_* aliases.
  */
 export function getEnv(): AppEnv {
   if (cached) return cached;
   cached = {
-    NEXT_PUBLIC_APP_URL: httpUrl(process.env.NEXT_PUBLIC_APP_URL),
+    APP_URL:
+      httpUrl(process.env.APP_URL) ||
+      httpUrl(process.env.NEXT_PUBLIC_APP_URL),
     TELEGRAM_BOT_TOKEN: str(process.env.TELEGRAM_BOT_TOKEN),
     TELEGRAM_ALLOWED_USER_IDS: process.env.TELEGRAM_ALLOWED_USER_IDS ?? "",
     TELEGRAM_WEBHOOK_SECRET: str(process.env.TELEGRAM_WEBHOOK_SECRET),
@@ -52,7 +54,9 @@ export function getEnv(): AppEnv {
     GMAIL_PUBSUB_TOPIC: str(process.env.GMAIL_PUBSUB_TOPIC),
     GEMINI_API_KEY: str(process.env.GEMINI_API_KEY),
     GEMINI_MODEL: str(process.env.GEMINI_MODEL) || "gemini-3.6-flash",
-    NEXT_PUBLIC_SUPABASE_URL: httpUrl(process.env.NEXT_PUBLIC_SUPABASE_URL),
+    SUPABASE_URL:
+      httpUrl(process.env.SUPABASE_URL) ||
+      httpUrl(process.env.NEXT_PUBLIC_SUPABASE_URL),
     SUPABASE_SERVICE_ROLE_KEY: str(process.env.SUPABASE_SERVICE_ROLE_KEY),
     TOKEN_ENCRYPTION_KEY: str(process.env.TOKEN_ENCRYPTION_KEY),
     CRON_SECRET: str(process.env.CRON_SECRET),
@@ -70,7 +74,7 @@ export function requireEnv<K extends keyof AppEnv>(key: K): NonNullable<AppEnv[K
 }
 
 export function appUrl(path = ""): string {
-  const fromEnv = getEnv().NEXT_PUBLIC_APP_URL;
+  const fromEnv = getEnv().APP_URL;
   const fromVercel = process.env.VERCEL_URL
     ? `https://${process.env.VERCEL_URL}`
     : undefined;
@@ -93,7 +97,7 @@ export function setupStatus() {
   return {
     telegram: Boolean(e.TELEGRAM_BOT_TOKEN),
     gemini: Boolean(e.GEMINI_API_KEY),
-    supabase: Boolean(e.NEXT_PUBLIC_SUPABASE_URL && e.SUPABASE_SERVICE_ROLE_KEY),
+    supabase: Boolean(e.SUPABASE_URL && e.SUPABASE_SERVICE_ROLE_KEY),
     google: Boolean(e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET),
     encryption: Boolean(e.TOKEN_ENCRYPTION_KEY),
     cron: Boolean(e.CRON_SECRET),

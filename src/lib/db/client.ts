@@ -140,7 +140,7 @@ let client: SupabaseClient | null = null;
 /** Untyped client — schema enforced in repositories via casts. */
 export function getDb(): SupabaseClient {
   if (client) return client;
-  const url = requireEnv("NEXT_PUBLIC_SUPABASE_URL");
+  const url = requireEnv("SUPABASE_URL");
   const key = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
   client = createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -150,6 +150,7 @@ export function getDb(): SupabaseClient {
 
 export function isDbConfigured(): boolean {
   return Boolean(
-    process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
+    (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL) &&
+      process.env.SUPABASE_SERVICE_ROLE_KEY
   );
 }

@@ -14,7 +14,7 @@ export default function HomePage() {
     { label: "Gemini", ok: flag("GEMINI_API_KEY") },
     {
       label: "Supabase",
-      ok: flag("NEXT_PUBLIC_SUPABASE_URL") && flag("SUPABASE_SERVICE_ROLE_KEY"),
+      ok: (flag("SUPABASE_URL") || flag("NEXT_PUBLIC_SUPABASE_URL")) && flag("SUPABASE_SERVICE_ROLE_KEY"),
     },
     {
       label: "Google OAuth",

@@ -55,7 +55,7 @@ Copy `.env.example` → `.env.local` (local) and set the same keys in Vercel.
 
 | Variable | Required | Description |
 |---|---|---|
-| `NEXT_PUBLIC_APP_URL` | yes | Public URL, e.g. `https://xxx.vercel.app` |
+| `APP_URL` | yes | Public URL, e.g. `https://xxx.vercel.app` |
 | `TELEGRAM_BOT_TOKEN` | yes | From @BotFather |
 | `TELEGRAM_ALLOWED_USER_IDS` | recommended | Your Telegram user id(s), comma-separated |
 | `TELEGRAM_WEBHOOK_SECRET` | yes | Random string; appended as `?secret=` on webhook |
@@ -65,7 +65,7 @@ Copy `.env.example` → `.env.local` (local) and set the same keys in Vercel.
 | `GMAIL_PUBSUB_TOPIC` | no | `projects/PROJECT/topics/TOPIC` for push |
 | `GEMINI_API_KEY` | yes | Google AI Studio |
 | `GEMINI_MODEL` | no | Default `gemini-3.6-flash` |
-| `NEXT_PUBLIC_SUPABASE_URL` | yes | Supabase project URL |
+| `SUPABASE_URL` | yes | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | Service role (server only) |
 | `TOKEN_ENCRYPTION_KEY` | yes | 64-char hex (or any long secret) |
 | `CRON_SECRET` | yes | Protects `/api/cron/*` and webhook setup |
@@ -140,7 +140,7 @@ Hourly Vercel cron for reminders is configured in `vercel.json` (Pro plans honor
 1. Create project at [supabase.com](https://supabase.com)
 2. Settings → API → copy Project URL + **service_role** key
 3. SQL Editor → paste and run `supabase/schema.sql`
-4. Set `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
+4. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
 
 OAuth tokens are stored **encrypted** (`gmail_*_token_enc`), never plaintext.
 
@@ -157,7 +157,7 @@ vercel --prod
 
 Or connect the GitHub repo in the Vercel dashboard and add env vars there.
 
-Set `NEXT_PUBLIC_APP_URL` to the production URL.
+Set `APP_URL` to the production URL.
 
 ---
 

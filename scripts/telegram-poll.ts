@@ -42,7 +42,7 @@ async function main() {
 
       for (const update of data.result ?? []) {
         offset = update.update_id + 1;
-        const app = process.env.NEXT_PUBLIC_APP_URL || "http://127.0.0.1:43127";
+        const app = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://127.0.0.1:43127";
         const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
         const url = secret
           ? `${app}/api/telegram/webhook?secret=${encodeURIComponent(secret)}`
