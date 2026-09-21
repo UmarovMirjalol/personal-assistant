@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { setupStatus } from "@/lib/env";
 
+export const dynamic = "force-dynamic";
+
 export default function HomePage() {
   const status = setupStatus();
   const checks = [

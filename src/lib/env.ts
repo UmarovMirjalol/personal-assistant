@@ -1,21 +1,28 @@
 import { z } from "zod";
 
+/** Treat empty strings as missing so Vercel build doesn't fail on unset env. */
+const emptyToUndefined = (v: unknown) =>
+  typeof v === "string" && v.trim() === "" ? undefined : v;
+
+const optionalUrl = z.preprocess(emptyToUndefined, z.string().url().optional());
+const optionalString = z.preprocess(emptyToUndefined, z.string().min(1).optional());
+
 const envSchema = z.object({
-  NEXT_PUBLIC_APP_URL: z.string().url().optional(),
-  TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
+  NEXT_PUBLIC_APP_URL: optionalUrl,
+  TELEGRAM_BOT_TOKEN: optionalString,
   TELEGRAM_ALLOWED_USER_IDS: z.string().optional().default(""),
-  TELEGRAM_WEBHOOK_SECRET: z.string().optional(),
-  GOOGLE_CLIENT_ID: z.string().optional(),
-  GOOGLE_CLIENT_SECRET: z.string().optional(),
-  GOOGLE_REDIRECT_URI: z.string().optional(),
-  GMAIL_PUBSUB_TOPIC: z.string().optional(),
-  GEMINI_API_KEY: z.string().optional(),
+  TELEGRAM_WEBHOOK_SECRET: optionalString,
+  GOOGLE_CLIENT_ID: optionalString,
+  GOOGLE_CLIENT_SECRET: optionalString,
+  GOOGLE_REDIRECT_URI: optionalUrl,
+  GMAIL_PUBSUB_TOPIC: optionalString,
+  GEMINI_API_KEY: optionalString,
   GEMINI_MODEL: z.string().default("gemini-3.6-flash"),
-  NEXT_PUBLIC_SUPABASE_URL: z.string().optional(),
-  SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
-  TOKEN_ENCRYPTION_KEY: z.string().optional(),
-  CRON_SECRET: z.string().optional(),
-  SERPER_API_KEY: z.string().optional(),
+  NEXT_PUBLIC_SUPABASE_URL: optionalUrl,
+  SUPABASE_SERVICE_ROLE_KEY: optionalString,
+  TOKEN_ENCRYPTION_KEY: optionalString,
+  CRON_SECRET: optionalString,
+  SERPER_API_KEY: optionalString,
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
@@ -53,8 +60,11 @@ export function requireEnv<K extends keyof AppEnv>(key: K): NonNullable<AppEnv[K
 }
 
 export function appUrl(path = ""): string {
-  const base = getEnv().NEXT_PUBLIC_APP_URL ?? "http://127.0.0.1:43127";
-  return `${base.replace(/\/$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
+  const base =
+    getEnv().NEXT_PUBLIC_APP_URL ||
+    process.env.VERCEL_URL && `https://${process.env.VERCEL_URL}` ||
+    "http://127.0.0.1:43127";
+  return `${String(base).replace(/\/$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 export function allowedTelegramIds(): number[] {
