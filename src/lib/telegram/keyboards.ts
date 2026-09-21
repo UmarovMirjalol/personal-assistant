@@ -2,6 +2,9 @@ import { InlineKeyboard } from "grammy";
 
 export function mainMenuKeyboard() {
   return new InlineKeyboard()
+    .text("🎓 Вузы", "menu:college")
+    .text("🎯 Сегодня apps", "menu:college_today")
+    .row()
     .text("📧 Почта", "menu:emails")
     .text("📅 Сегодня", "menu:today")
     .row()
@@ -13,6 +16,16 @@ export function mainMenuKeyboard() {
     .row()
     .text("🍅 Помодоро", "timer:start:25:pomodoro")
     .text("⚙️", "menu:settings");
+}
+
+export function collegeKeyboard() {
+  return new InlineKeyboard()
+    .text("🎯 План на сегодня", "menu:college_today")
+    .row()
+    .text("📧 Admissions mail", "menu:college_mail")
+    .row()
+    .text("✍️ Эссе каркас", "menu:college_essay")
+    .text("« Меню", "menu:home");
 }
 
 export function timerPresetsKeyboard() {
@@ -107,11 +120,11 @@ export function gmailConnectKeyboard(url: string) {
 
 export function welcomeKeyboard(opts?: { connectUrl?: string }) {
   const kb = new InlineKeyboard()
+    .text("🎓 Вузы", "menu:college")
     .text("⏱ Таймер", "menu:timer_presets")
-    .text("📊 Статус", "menu:status")
     .row()
     .text("📧 Почта", "menu:emails")
-    .text("📅 Сегодня", "menu:today");
+    .text("📊 Статус", "menu:status");
   if (opts?.connectUrl) {
     kb.row().url("Подключить Gmail", opts.connectUrl);
   }

@@ -38,6 +38,7 @@ import {
   isStatusCommand,
   coinFlip,
 } from "@/lib/telegram/features";
+import { handleCollegeCommand, isCollegeIntent } from "@/lib/college/apps";
 import { runResearch } from "@/lib/research/search";
 
 const CHAT_SYSTEM = `Ты — личный AI-помощник в Telegram. Можно звать Aether.
@@ -251,6 +252,10 @@ async function tryFastPath(
 
   if (/^\/help$/.test(t) || t === "help" || t === "помощь") {
     return formatHelp();
+  }
+
+  if (isCollegeIntent(text) || text.startsWith("/apps")) {
+    return (await handleCollegeCommand(user, text)) ?? null;
   }
 
   // Timers — before generic reminders

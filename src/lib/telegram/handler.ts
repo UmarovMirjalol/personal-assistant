@@ -18,6 +18,7 @@ import {
   timerPresetsKeyboard,
   timerRunningKeyboard,
   welcomeKeyboard,
+  collegeKeyboard,
 } from "@/lib/telegram/keyboards";
 import {
   formatTasks,
@@ -50,6 +51,7 @@ import {
   parseTimerCommand,
 } from "@/lib/reminders/timers";
 import { buildStatusCard } from "@/lib/telegram/features";
+import { handleCollegeCommand } from "@/lib/college/apps";
 import { executeTool } from "@/lib/ai/tools";
 
 type TgUser = {
@@ -390,6 +392,39 @@ async function handleCallback(cq: {
     await sendMessage(chatId, await buildStatusCard(user), {
       reply_markup: mainMenuKeyboard(),
     });
+    return;
+  }
+  if (data === "menu:college") {
+    await sendMessage(chatId, (await handleCollegeCommand(user, "вузы"))!, {
+      reply_markup: collegeKeyboard(),
+    });
+    return;
+  }
+  if (data === "menu:college_today") {
+    await sendMessage(
+      chatId,
+      (await handleCollegeCommand(user, "поступление сегодня"))!,
+      { reply_markup: collegeKeyboard() }
+    );
+    return;
+  }
+  if (data === "menu:college_mail") {
+    await sendMessage(
+      chatId,
+      (await handleCollegeCommand(user, "письма поступление"))!,
+      { reply_markup: collegeKeyboard() }
+    );
+    return;
+  }
+  if (data === "menu:college_essay") {
+    await sendMessage(
+      chatId,
+      (await handleCollegeCommand(
+        user,
+        "эссе идея why this major / impact story"
+      ))!,
+      { reply_markup: collegeKeyboard() }
+    );
     return;
   }
   if (data === "menu:research") {

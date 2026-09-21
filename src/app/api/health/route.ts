@@ -48,7 +48,7 @@ export async function GET() {
 
   return NextResponse.json({
     ok: true,
-    version: "2026-09-21-v7",
+    version: "2026-09-21-v8",
     appUrl: getEnv().APP_URL || null,
     status: {
       ...status,
