@@ -207,6 +207,31 @@ export const toolDeclarations: AgentToolDeclaration[] = [
     description: "List active memory items.",
     parameters: { type: SchemaType.OBJECT, properties: {} },
   },
+  {
+    name: "get_calendar_events",
+    description:
+      "Placeholder for future Google Calendar integration. Currently returns not_implemented.",
+    parameters: {
+      type: SchemaType.OBJECT,
+      properties: {
+        day: { type: SchemaType.STRING, description: "today|tomorrow|ISO date" },
+      },
+    },
+  },
+  {
+    name: "create_calendar_event",
+    description:
+      "Placeholder for future Google Calendar integration. Currently returns not_implemented.",
+    parameters: {
+      type: SchemaType.OBJECT,
+      properties: {
+        title: { type: SchemaType.STRING },
+        start: { type: SchemaType.STRING },
+        end: { type: SchemaType.STRING },
+      },
+      required: ["title", "start"],
+    },
+  },
 ];
 
 export async function executeTool(
@@ -280,6 +305,13 @@ export async function executeTool(
     }
     case "get_memory":
       return listMemory(ctx.user.id);
+    case "get_calendar_events":
+    case "create_calendar_event":
+      return {
+        error: "not_implemented",
+        message:
+          "Google Calendar ещё не подключён. Пока используй tasks/reminders и план дня.",
+      };
     default:
       return { error: `Unknown tool: ${name}` };
   }
