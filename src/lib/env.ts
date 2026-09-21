@@ -1,17 +1,30 @@
-import { z } from "zod";
+export type AppEnv = {
+  NEXT_PUBLIC_APP_URL?: string;
+  TELEGRAM_BOT_TOKEN?: string;
+  TELEGRAM_ALLOWED_USER_IDS: string;
+  TELEGRAM_WEBHOOK_SECRET?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  GOOGLE_REDIRECT_URI?: string;
+  GMAIL_PUBSUB_TOPIC?: string;
+  GEMINI_API_KEY?: string;
+  GEMINI_MODEL: string;
+  NEXT_PUBLIC_SUPABASE_URL?: string;
+  SUPABASE_SERVICE_ROLE_KEY?: string;
+  TOKEN_ENCRYPTION_KEY?: string;
+  CRON_SECRET?: string;
+  SERPER_API_KEY?: string;
+};
 
-/** Empty or invalid values become undefined — never fail the build. */
-function softString(v: unknown): string | undefined {
-  if (typeof v !== "string") return undefined;
-  const t = v.trim();
-  return t.length ? t : undefined;
+function str(v: string | undefined): string | undefined {
+  const t = v?.trim();
+  return t ? t : undefined;
 }
 
-function softUrl(v: unknown): string | undefined {
-  const t = softString(v);
+function httpUrl(v: string | undefined): string | undefined {
+  const t = str(v);
   if (!t) return undefined;
   try {
-    // Accept only absolute http(s) URLs
     const u = new URL(t);
     if (u.protocol !== "http:" && u.protocol !== "https:") return undefined;
     return t;
@@ -20,71 +33,31 @@ function softUrl(v: unknown): string | undefined {
   }
 }
 
-const envSchema = z.object({
-  NEXT_PUBLIC_APP_URL: z.preprocess(softUrl, z.string().url().optional()),
-  TELEGRAM_BOT_TOKEN: z.preprocess(softString, z.string().min(1).optional()),
-  TELEGRAM_ALLOWED_USER_IDS: z.string().optional().default(""),
-  TELEGRAM_WEBHOOK_SECRET: z.preprocess(softString, z.string().min(1).optional()),
-  GOOGLE_CLIENT_ID: z.preprocess(softString, z.string().min(1).optional()),
-  GOOGLE_CLIENT_SECRET: z.preprocess(softString, z.string().min(1).optional()),
-  GOOGLE_REDIRECT_URI: z.preprocess(softUrl, z.string().url().optional()),
-  GMAIL_PUBSUB_TOPIC: z.preprocess(softString, z.string().min(1).optional()),
-  GEMINI_API_KEY: z.preprocess(softString, z.string().min(1).optional()),
-  GEMINI_MODEL: z.string().default("gemini-3.6-flash"),
-  NEXT_PUBLIC_SUPABASE_URL: z.preprocess(softUrl, z.string().url().optional()),
-  SUPABASE_SERVICE_ROLE_KEY: z.preprocess(softString, z.string().min(1).optional()),
-  TOKEN_ENCRYPTION_KEY: z.preprocess(softString, z.string().min(1).optional()),
-  CRON_SECRET: z.preprocess(softString, z.string().min(1).optional()),
-  SERPER_API_KEY: z.preprocess(softString, z.string().min(1).optional()),
-});
-
-export type AppEnv = z.infer<typeof envSchema>;
-
 let cached: AppEnv | null = null;
 
+/**
+ * Never throws. Invalid/empty env values become undefined.
+ * This must stay safe during `next build` prerender.
+ */
 export function getEnv(): AppEnv {
   if (cached) return cached;
-  const parsed = envSchema.safeParse({
-    NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
-    TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
+  cached = {
+    NEXT_PUBLIC_APP_URL: httpUrl(process.env.NEXT_PUBLIC_APP_URL),
+    TELEGRAM_BOT_TOKEN: str(process.env.TELEGRAM_BOT_TOKEN),
     TELEGRAM_ALLOWED_USER_IDS: process.env.TELEGRAM_ALLOWED_USER_IDS ?? "",
-    TELEGRAM_WEBHOOK_SECRET: process.env.TELEGRAM_WEBHOOK_SECRET,
-    GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
-    GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
-    GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI,
-    GMAIL_PUBSUB_TOPIC: process.env.GMAIL_PUBSUB_TOPIC,
-    GEMINI_API_KEY: process.env.GEMINI_API_KEY,
-    GEMINI_MODEL: process.env.GEMINI_MODEL ?? "gemini-3.6-flash",
-    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
-    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
-    TOKEN_ENCRYPTION_KEY: process.env.TOKEN_ENCRYPTION_KEY,
-    CRON_SECRET: process.env.CRON_SECRET,
-    SERPER_API_KEY: process.env.SERPER_API_KEY,
-  });
-
-  if (!parsed.success) {
-    // Last resort: never crash build/runtime for env shape
-    cached = {
-      NEXT_PUBLIC_APP_URL: softUrl(process.env.NEXT_PUBLIC_APP_URL),
-      TELEGRAM_BOT_TOKEN: softString(process.env.TELEGRAM_BOT_TOKEN),
-      TELEGRAM_ALLOWED_USER_IDS: process.env.TELEGRAM_ALLOWED_USER_IDS ?? "",
-      TELEGRAM_WEBHOOK_SECRET: softString(process.env.TELEGRAM_WEBHOOK_SECRET),
-      GOOGLE_CLIENT_ID: softString(process.env.GOOGLE_CLIENT_ID),
-      GOOGLE_CLIENT_SECRET: softString(process.env.GOOGLE_CLIENT_SECRET),
-      GOOGLE_REDIRECT_URI: softUrl(process.env.GOOGLE_REDIRECT_URI),
-      GMAIL_PUBSUB_TOPIC: softString(process.env.GMAIL_PUBSUB_TOPIC),
-      GEMINI_API_KEY: softString(process.env.GEMINI_API_KEY),
-      GEMINI_MODEL: process.env.GEMINI_MODEL || "gemini-3.6-flash",
-      NEXT_PUBLIC_SUPABASE_URL: softUrl(process.env.NEXT_PUBLIC_SUPABASE_URL),
-      SUPABASE_SERVICE_ROLE_KEY: softString(process.env.SUPABASE_SERVICE_ROLE_KEY),
-      TOKEN_ENCRYPTION_KEY: softString(process.env.TOKEN_ENCRYPTION_KEY),
-      CRON_SECRET: softString(process.env.CRON_SECRET),
-      SERPER_API_KEY: softString(process.env.SERPER_API_KEY),
-    };
-    return cached;
-  }
-
-  cached = parsed.data;
+    TELEGRAM_WEBHOOK_SECRET: str(process.env.TELEGRAM_WEBHOOK_SECRET),
+    GOOGLE_CLIENT_ID: str(process.env.GOOGLE_CLIENT_ID),
+    GOOGLE_CLIENT_SECRET: str(process.env.GOOGLE_CLIENT_SECRET),
+    GOOGLE_REDIRECT_URI: httpUrl(process.env.GOOGLE_REDIRECT_URI),
+    GMAIL_PUBSUB_TOPIC: str(process.env.GMAIL_PUBSUB_TOPIC),
+    GEMINI_API_KEY: str(process.env.GEMINI_API_KEY),
+    GEMINI_MODEL: str(process.env.GEMINI_MODEL) || "gemini-3.6-flash",
+    NEXT_PUBLIC_SUPABASE_URL: httpUrl(process.env.NEXT_PUBLIC_SUPABASE_URL),
+    SUPABASE_SERVICE_ROLE_KEY: str(process.env.SUPABASE_SERVICE_ROLE_KEY),
+    TOKEN_ENCRYPTION_KEY: str(process.env.TOKEN_ENCRYPTION_KEY),
+    CRON_SECRET: str(process.env.CRON_SECRET),
+    SERPER_API_KEY: str(process.env.SERPER_API_KEY),
+  };
   return cached;
 }
 
@@ -116,28 +89,15 @@ export function allowedTelegramIds(): number[] {
 }
 
 export function setupStatus() {
-  try {
-    const e = getEnv();
-    return {
-      telegram: Boolean(e.TELEGRAM_BOT_TOKEN),
-      gemini: Boolean(e.GEMINI_API_KEY),
-      supabase: Boolean(e.NEXT_PUBLIC_SUPABASE_URL && e.SUPABASE_SERVICE_ROLE_KEY),
-      google: Boolean(e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET),
-      encryption: Boolean(e.TOKEN_ENCRYPTION_KEY),
-      cron: Boolean(e.CRON_SECRET),
-      webhookSecret: Boolean(e.TELEGRAM_WEBHOOK_SECRET),
-      search: Boolean(e.SERPER_API_KEY) ? ("serper" as const) : ("duckduckgo" as const),
-    };
-  } catch {
-    return {
-      telegram: false,
-      gemini: false,
-      supabase: false,
-      google: false,
-      encryption: false,
-      cron: false,
-      webhookSecret: false,
-      search: "duckduckgo" as const,
-    };
-  }
+  const e = getEnv();
+  return {
+    telegram: Boolean(e.TELEGRAM_BOT_TOKEN),
+    gemini: Boolean(e.GEMINI_API_KEY),
+    supabase: Boolean(e.NEXT_PUBLIC_SUPABASE_URL && e.SUPABASE_SERVICE_ROLE_KEY),
+    google: Boolean(e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET),
+    encryption: Boolean(e.TOKEN_ENCRYPTION_KEY),
+    cron: Boolean(e.CRON_SECRET),
+    webhookSecret: Boolean(e.TELEGRAM_WEBHOOK_SECRET),
+    search: Boolean(e.SERPER_API_KEY) ? ("serper" as const) : ("duckduckgo" as const),
+  };
 }

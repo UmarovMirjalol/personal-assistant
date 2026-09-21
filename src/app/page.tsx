@@ -1,18 +1,29 @@
 import Link from "next/link";
-import { setupStatus } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+function flag(name: string): boolean {
+  const v = process.env[name];
+  return Boolean(v && v.trim());
+}
 
 export default function HomePage() {
-  const status = setupStatus();
   const checks = [
-    { label: "Telegram bot", ok: status.telegram },
-    { label: "Gemini", ok: status.gemini },
-    { label: "Supabase", ok: status.supabase },
-    { label: "Google OAuth", ok: status.google },
-    { label: "Token encryption", ok: status.encryption },
-    { label: "Cron secret", ok: status.cron },
+    { label: "Telegram bot", ok: flag("TELEGRAM_BOT_TOKEN") },
+    { label: "Gemini", ok: flag("GEMINI_API_KEY") },
+    {
+      label: "Supabase",
+      ok: flag("NEXT_PUBLIC_SUPABASE_URL") && flag("SUPABASE_SERVICE_ROLE_KEY"),
+    },
+    {
+      label: "Google OAuth",
+      ok: flag("GOOGLE_CLIENT_ID") && flag("GOOGLE_CLIENT_SECRET"),
+    },
+    { label: "Token encryption", ok: flag("TOKEN_ENCRYPTION_KEY") },
+    { label: "Cron secret", ok: flag("CRON_SECRET") },
   ];
+  const search = flag("SERPER_API_KEY") ? "serper" : "duckduckgo";
 
   return (
     <main className="relative flex-1 overflow-hidden">
@@ -71,7 +82,7 @@ export default function HomePage() {
             ))}
           </ul>
           <p className="mt-4 text-sm text-[var(--muted)]">
-            Search provider: <span className="text-[var(--ink)]">{status.search}</span>
+            Search provider: <span className="text-[var(--ink)]">{search}</span>
             . Full setup guide is in the README.
           </p>
         </section>
