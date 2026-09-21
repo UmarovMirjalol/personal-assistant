@@ -81,33 +81,76 @@ export async function generateText(opts: {
   });
 }
 
+function extractJsonText(raw: string): string {
+  let text = raw.trim();
+  // Strip markdown fences anywhere
+  text = text.replace(/```(?:json)?\s*/gi, "").replace(/```/g, "").trim();
+  // Prefer first JSON object or array
+  const obj = text.match(/\{[\s\S]*\}/);
+  const arr = text.match(/\[[\s\S]*\]/);
+  if (obj && arr) {
+    return obj.index! <= arr.index! ? obj[0] : arr[0];
+  }
+  if (obj) return obj[0];
+  if (arr) return arr[0];
+  return text;
+}
+
+function parseJsonLoose(raw: string): unknown {
+  const cleaned = extractJsonText(raw);
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    // Trailing commas / smart quotes
+    const fixed = cleaned
+      .replace(/[“”]/g, '"')
+      .replace(/[‘’]/g, "'")
+      .replace(/,\s*([}\]])/g, "$1");
+    return JSON.parse(fixed);
+  }
+}
+
 export async function generateJson<T>(opts: {
   system: string;
   prompt: string;
   schema: z.ZodType<T>;
   maxOutputTokens?: number;
 }): Promise<T> {
-  const text = await generateText({
-    system: `${opts.system}\n\nRespond with valid JSON only. No markdown fences.`,
-    prompt: opts.prompt,
-    maxOutputTokens: opts.maxOutputTokens ?? 1024,
-  });
+  const runOnce = async (extraHint = "") =>
+    withModelFallback(async (modelName) => {
+      const model = getClient().getGenerativeModel({
+        model: modelName,
+        systemInstruction: `${opts.system}\n\nReturn ONLY valid JSON. No markdown, no commentary.${extraHint}`,
+      });
+      const result = await model.generateContent({
+        contents: [{ role: "user", parts: [{ text: opts.prompt }] }],
+        generationConfig: {
+          maxOutputTokens: opts.maxOutputTokens ?? 1024,
+          temperature: 0.2,
+          responseMimeType: "application/json",
+        },
+      });
+      return result.response.text().trim();
+    });
 
-  const cleaned = text
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(cleaned);
-  } catch {
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("AI returned non-JSON");
-    parsed = JSON.parse(match[0]);
+  let lastRaw = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      lastRaw = await runOnce(
+        attempt === 0
+          ? ""
+          : "\nPrevious output was invalid. Output a single JSON value only."
+      );
+      const parsed = parseJsonLoose(lastRaw);
+      return opts.schema.parse(parsed);
+    } catch {
+      if (attempt === 1) break;
+    }
   }
-  return opts.schema.parse(parsed);
+
+  throw new Error(
+    "AI вернул ответ не в JSON. Попробуй ещё раз или переформулируй запрос."
+  );
 }
 
 export type AgentToolDeclaration = FunctionDeclaration;

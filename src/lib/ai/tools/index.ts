@@ -439,20 +439,28 @@ async function toolSetDayPlan(ctx: ToolContext, planText: string, day: string) {
   }
   base.setHours(0, 0, 0, 0);
 
-  const parsed = await generateText({
-    system: `Parse a day plan into JSON array only:
-[{"title":"...","start":"HH:MM","end":"HH:MM"|null}]
-Use 24h times. Infer reasonable blocks. No markdown.`,
-    prompt: planText,
-    maxOutputTokens: 500,
-  });
+  const planSchema = z.array(
+    z.object({
+      title: z.string(),
+      start: z.string(),
+      end: z.string().nullable(),
+    })
+  );
 
-  let items: Array<{ title: string; start: string; end: string | null }>;
+  let items: z.infer<typeof planSchema>;
   try {
-    const cleaned = parsed.replace(/```json|```/g, "").trim();
-    items = JSON.parse(cleaned);
+    items = await generateJson({
+      system: `Parse a day plan into a JSON array:
+[{"title":"...","start":"HH:MM","end":"HH:MM"|null}]
+Use 24h times. Infer reasonable blocks.`,
+      prompt: planText,
+      schema: planSchema,
+      maxOutputTokens: 500,
+    });
   } catch {
-    throw new Error("Could not parse day plan");
+    throw new Error(
+      "Не смог разобрать план дня. Напиши проще, например: «завтра 9-14 школа, 15-17 research, 19 футбол»"
+    );
   }
 
   const created = [];
