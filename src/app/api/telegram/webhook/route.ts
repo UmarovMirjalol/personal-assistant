@@ -30,27 +30,22 @@ export async function POST(req: NextRequest) {
 
   try {
     await processTelegramUpdate(parsed.data);
-  } catch (err) {
+  } catch {
     const chatId =
       parsed.data.message?.chat.id ?? parsed.data.callback_query?.message?.chat.id;
-    const msg = err instanceof Error ? err.message : "unknown";
-    const stack = err instanceof Error ? err.stack : undefined;
     if (chatId) {
       try {
         const { sendMessage } = await import("@/lib/telegram/client");
         await sendMessage(
           chatId,
-          /503|high demand|unavailable/i.test(msg)
-            ? "AI временно недоступен (перегрузка). Напиши /start или «помощь»."
-            : `Ошибка: ${msg.slice(0, 300)}`
+          "Секунду подтупил. Напиши ещё раз — я на связи."
         );
       } catch {
         // ignore
       }
     }
-    // Expose error to deployer for diagnosis (no secrets in typical stack messages)
     if (req.nextUrl.searchParams.get("debug") === "1") {
-      return NextResponse.json({ ok: false, error: msg, stack: stack?.slice(0, 1500) });
+      return NextResponse.json({ ok: false, error: "handler_failed" });
     }
     return NextResponse.json({ ok: true });
   }

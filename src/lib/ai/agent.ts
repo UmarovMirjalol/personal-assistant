@@ -1,4 +1,9 @@
-import { isGeminiConfigured, generateText, runWithTools } from "@/lib/ai/gemini";
+import {
+  isGeminiConfigured,
+  generateChat,
+  generateText,
+  runWithTools,
+} from "@/lib/ai/gemini";
 import { toolDeclarations, executeTool } from "@/lib/ai/tools";
 import type { User, Settings } from "@/lib/db/client";
 import {
@@ -14,27 +19,41 @@ import { listReminders, createReminder } from "@/lib/db/reminders";
 import { parseRelativeTime } from "@/lib/reminders/time";
 import { runResearch } from "@/lib/research/search";
 
-const SYSTEM = `You are a personal Telegram AI assistant.
-Personality: concise, practical, intelligent, proactive but not annoying.
-No corporate fluff. No huge answers. Don't repeat the obvious.
-Language: answer in the user's language (usually Russian).
+const CHAT_SYSTEM = `Ты — личный AI-помощник в Telegram. Можно звать Aether.
 
-When the user needs to act, lead with what they must do.
+Как говорить:
+- как умный друг в переписке, не как саппорт и не как корпоративный бот;
+- коротко и живо: обычно 1–5 предложений, без простыней;
+- на языке пользователя (обычно русский);
+- можно лёгкий юмор и сленг, но без кринжа и панибратства;
+- никогда не пиши «Чем могу помочь?», «Как я могу помочь вам сегодня?», «Я языковая модель…»;
+- не упоминай JSON, API, tools, промпты, модели, серверные ошибки;
+- если чего-то не знаешь — скажи прямо, без оправданий.
 
-You have tools. Use them instead of guessing.
-Never send emails yourself — only draft via draft_email tool.
-Never invent email contents, research facts, deadlines, or calendar data.
-If Gmail is not connected and email tools fail with GMAIL_NOT_CONNECTED, tell the user:
-"Чтобы анализировать почту, сначала подключи Gmail."
-If research/search fails, explain — do not fabricate results.
-If unsure, say so (UNCERTAIN).
+Ты можешь просто болтать: учёба, жизнь, решения, идеи, код, что угодно.
+Если человек просит действие (почта, задача, напоминание, поиск) — делай или уточни одну деталь.
+Не выдумывай факты из почты или интернета.`;
 
-For day plans like "завтра школа до 14...", use set_day_plan.
-For "что пришло" / "разбери почту" use get_emails with analyze=true and today_only when relevant.
-For reminders use create_reminder with natural "when".
-Future calendar tools may appear — do not pretend they exist yet.
+const TOOL_SYSTEM = `${CHAT_SYSTEM}
 
-Keep replies Telegram-sized.`;
+Когда реально нужно действие — используй tools:
+- почта / письма → get_emails / search_emails / get_email
+- напоминания → create_reminder
+- задачи / план дня → create_task / set_day_plan / get_today_plan
+- research / поиск → research / web_search
+- черновик ответа на письмо → draft_email (никогда не отправляй сам)
+
+Если Gmail не подключён — скажи обычным языком и дай ссылку.
+Отвечай готовым текстом человеку, не JSON.`;
+
+/** Only clear action intents — casual chat must NOT go through tools. */
+function needsTools(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 2) return false;
+  return /(?:почт|письм|email|gmail|inbox|инбокс)|(?:напомин|remind)|(?:задач|todo|deadline|дедлайн)|(?:план\s+на\s+(?:день|сегодня|завтра)|что\s+у\s+меня\s+сегодня)|(?:research|погугли|найди\s+(?:в\s+интернете|информац)|разбер(?:и|ить)?\s+(?:почт|письм)|что\s+(?:важного\s+)?пришло)|(?:draft|черновик|ответ(?:ь|ить)?\s+на\s+письм)|(?:создай\s+задач|добавь\s+задач)|(?:через\s+\d+\s*(?:мин|час|час|дн))/i.test(
+    t
+  );
+}
 
 export async function handleUserMessage(opts: {
   user: User;
@@ -43,7 +62,6 @@ export async function handleUserMessage(opts: {
 }): Promise<string> {
   const { user, settings, text } = opts;
 
-  // Fast-path intents without burning Gemini when possible
   const fast = await tryFastPath(user, settings, text);
   if (fast) {
     await appendConversation(user.id, "user", text);
@@ -52,53 +70,99 @@ export async function handleUserMessage(opts: {
   }
 
   if (!isGeminiConfigured()) {
-    return "Gemini API key не настроен. Добавь GEMINI_API_KEY в environment variables.";
+    return "Пока без AI-ключа не могу нормально болтать. Напиши «помощь» — там простые команды.";
   }
 
   const memory = await listMemory(user.id);
-  const history = await getRecentConversation(user.id, 10);
+  const history = await getRecentConversation(user.id, 16);
   const memoryBlock =
     memory.length > 0
-      ? `\nKnown useful context:\n${memory.map((m) => `- (${m.kind}) ${m.content}`).join("\n")}`
+      ? `\nЧто помню о тебе:\n${memory.map((m) => `- ${m.content}`).join("\n")}`
       : "";
 
   const gmailStatus = isGmailConnected(user)
-    ? `Gmail connected (${user.gmail_email ?? "yes"}).`
-    : "Gmail NOT connected.";
+    ? `Gmail подключён (${user.gmail_email ?? "ok"}).`
+    : `Gmail не подключён. Ссылка: ${appUrl(`/connect?uid=${user.id}`)}`;
 
   await appendConversation(user.id, "user", text);
 
-  const reply = await runWithTools({
-    system: `${SYSTEM}\n\n${gmailStatus}\nTimezone: ${user.timezone}.${memoryBlock}\nConnect Gmail URL: ${appUrl(`/connect?uid=${user.id}`)}`,
-    messages: [
-      ...history.map((h) => ({
-        role: (h.role === "assistant" ? "model" : "user") as "user" | "model",
-        text: h.content,
-      })),
-      { role: "user" as const, text },
-    ],
-    tools: toolDeclarations,
-    executeTool: async (name, args) => {
-      try {
-        return await executeTool({ user, settings }, name, args);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "error";
-        if (msg === "GMAIL_NOT_CONNECTED") {
-          return {
-            error: "GMAIL_NOT_CONNECTED",
-            message: "Чтобы анализировать почту, сначала подключи Gmail.",
-            connect_url: appUrl(`/connect?uid=${user.id}`),
-          };
-        }
-        return { error: msg };
-      }
-    },
-    maxSteps: 6,
-  });
+  const historyMsgs = [
+    ...history.map((h) => ({
+      role: (h.role === "assistant" ? "model" : "user") as "user" | "model",
+      text: h.content,
+    })),
+    { role: "user" as const, text },
+  ];
 
-  const finalReply = reply || "Готово.";
+  let reply: string;
+  try {
+    if (needsTools(text)) {
+      try {
+        reply = await runWithTools({
+          system: `${TOOL_SYSTEM}\n\n${gmailStatus}\nTimezone: ${user.timezone}.${memoryBlock}`,
+          messages: historyMsgs,
+          tools: toolDeclarations,
+          executeTool: async (name, args) => {
+            try {
+              return await executeTool({ user, settings }, name, args);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : "error";
+              if (msg === "GMAIL_NOT_CONNECTED") {
+                return {
+                  error: "GMAIL_NOT_CONNECTED",
+                  message: "Gmail не подключён",
+                  connect_url: appUrl(`/connect?uid=${user.id}`),
+                };
+              }
+              return { error: msg };
+            }
+          },
+          maxSteps: 5,
+        });
+      } catch {
+        reply = await generateChat({
+          system: `${CHAT_SYSTEM}\n\n${gmailStatus}.${memoryBlock}\nСейчас действия недоступны — ответь по-человечески и предложи альтернативу без техжаргона.`,
+          messages: historyMsgs,
+          maxOutputTokens: 700,
+          temperature: 0.8,
+        });
+      }
+    } else {
+      reply = await generateChat({
+        system: `${CHAT_SYSTEM}\n\nКонтекст: ${gmailStatus}\nTimezone: ${user.timezone}.${memoryBlock}`,
+        messages: historyMsgs,
+        maxOutputTokens: 900,
+        temperature: 0.9,
+      });
+    }
+  } catch {
+    try {
+      reply = await generateText({
+        system: CHAT_SYSTEM,
+        prompt: text,
+        maxOutputTokens: 500,
+        temperature: 0.85,
+      });
+    } catch {
+      reply =
+        "Сейчас туплю. Напиши ещё раз или скажи «помощь» — напоминания и задачи работают и без болтовни.";
+    }
+  }
+
+  const finalReply = sanitizeReply(reply || "Ок.");
   await appendConversation(user.id, "assistant", finalReply);
   return finalReply;
+}
+
+function sanitizeReply(raw: string): string {
+  let t = raw.trim();
+  // Strip accidental system/tool leaks
+  t = t.replace(/```[\s\S]*?```/g, "").trim();
+  t = t.replace(/^(Assistant|Aether|Бот)\s*:\s*/i, "");
+  if (/^\s*\{[\s\S]*\}\s*$/.test(t)) {
+    return "Секунду, криво ответил. Скажи ещё раз своими словами.";
+  }
+  return t || "Ок.";
 }
 
 async function tryFastPath(
@@ -108,17 +172,8 @@ async function tryFastPath(
 ): Promise<string | null> {
   const t = text.trim().toLowerCase();
 
-  // Greetings — never need Gemini
   if (
-    /^(салам|салому алейкум|привет|здравствуй|здравствуйте|хай|hello|hi|hey|yo)[\s!.]*$/i.test(
-      t
-    )
-  ) {
-    return "Привет. Чем помочь? Могу задачи, reminders, план дня, почту или research.\nНапиши «помощь» для примеров.";
-  }
-
-  if (
-    /^(что\s+у\s+меня\s+сегодня|план\s+на\s+сегодня|\/today|сегодня\??)$/i.test(t) ||
+    /^(что\s+у\s+меня\s+сегодня|план\s+на\s+сегодня|\/today)$/i.test(t) ||
     t === "today"
   ) {
     const plan = await getTodayPlan(user.id, user.timezone);
@@ -135,26 +190,23 @@ async function tryFastPath(
 
   if (/^\/help$/.test(t) || t === "help" || t === "помощь") {
     return [
-      "Я понимаю обычный язык. Примеры:",
-      "• что у меня сегодня?",
-      "• напомни завтра в 16:00 отправить CV",
-      "• через 2 часа напомни проверить почту",
-      "• что важного пришло?",
-      "• разбери последние письма",
-      "• найди исследования по startup failure prediction",
-      "• что мне сейчас нужно сделать?",
+      "Пиши как человеку — можем просто поболтать.",
       "",
-      "Shortcuts: /today /tasks /emails /research /help",
+      "Если по делу:",
+      "• что у меня сегодня?",
+      "• напомни завтра в 16:00 …",
+      "• через 2 часа напомни …",
+      "• задача …",
+      "• что важного пришло? / разбери почту",
+      "• сделай research по …",
+      "",
+      "Или команды: /today /tasks /emails /research",
     ].join("\n");
   }
 
-  // Lightweight reminder without LLM
-  const remindMatch = text.match(
-    /^(?:напомни|remind(?:\s+me)?)\s+(.+)$/i
-  );
+  const remindMatch = text.match(/^(?:напомни|remind(?:\s+me)?)\s+(.+)$/i);
   if (remindMatch) {
     const rest = remindMatch[1].trim();
-    // split time phrase from text when possible
     const whenGuess =
       rest.match(
         /((?:через|in)\s+\d+\s+\S+|(?:завтра|tomorrow|сегодня|today|в\s+пятниц\S*|friday|monday|вторник|среду|четверг|субботу|воскресенье)(?:\s+в?\s*\d{1,2}[:.]\d{2})?|(?:\d{1,2}[:.]\d{2}))/i
@@ -169,36 +221,25 @@ async function tryFastPath(
       text: body || rest,
       remindAt: at.toISOString(),
     });
-    return `Ок. Напомню ${at.toLocaleString("ru-RU")}: ${reminder.text}`;
+    return `Ок, напомню ${at.toLocaleString("ru-RU")}: ${reminder.text}`;
   }
 
-  // Lightweight task create
   const taskMatch = text.match(/^(?:задача|добавь задачу|todo)\s*[:\-]?\s*(.+)$/i);
   if (taskMatch) {
     const task = await createTask({ userId: user.id, title: taskMatch[1].trim() });
-    return `Задача создана: ${task.title}`;
+    return `Записал: ${task.title}`;
   }
 
-  // Lightweight research shortcut
   const researchMatch = text.match(
     /^(?:\/research\s+|сделай\s+research\s+по\s+|research\s+|найди\s+(?:последние\s+)?(?:исследования\s+по\s+)?|погугли\s+)(.+)/i
   );
   if (researchMatch) {
-    return runResearch(researchMatch[1].trim());
+    try {
+      return await runResearch(researchMatch[1].trim());
+    } catch {
+      return "Сейчас не смог нормально поискать. Скажи тему ещё раз чуть позже.";
+    }
   }
 
   return null;
-}
-
-export async function suggestNextActions(user: User): Promise<string> {
-  const tasks = await listTasks(user.id, { status: "open", limit: 10 });
-  const plan = await getTodayPlan(user.id);
-  if (!isGeminiConfigured()) {
-    return formatTodayPlan(plan);
-  }
-  return generateText({
-    system: "List top 3 concrete next actions. Concise. User language Russian if tasks are RU.",
-    prompt: JSON.stringify({ tasks, plan }),
-    maxOutputTokens: 400,
-  });
 }

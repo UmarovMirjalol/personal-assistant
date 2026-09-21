@@ -46,24 +46,28 @@ async function withModelFallback<T>(
       } catch (err) {
         lastErr = err;
         const msg = err instanceof Error ? err.message : String(err);
-        if (!isRetryable(msg)) break; // try next model only for capacity errors? also try next on 404
+        // Always try next model on capacity / missing model
         if (/404|not found|no longer available/i.test(msg)) break;
-        await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
+        if (!isRetryable(msg) && attempt === 0) {
+          // one quick retry even for flaky parse/network
+          await new Promise((r) => setTimeout(r, 400));
+          continue;
+        }
+        if (!isRetryable(msg)) break;
+        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
       }
     }
   }
-  const msg = lastErr instanceof Error ? lastErr.message : "Gemini failed";
-  throw new Error(
-    /503|high demand|overloaded/i.test(msg)
-      ? "Gemini перегружен. Попробуй через минуту или напиши простую команду: /start, помощь, напомни…"
-      : msg
-  );
+  throw lastErr instanceof Error
+    ? lastErr
+    : new Error("AI временно недоступен");
 }
 
 export async function generateText(opts: {
   system: string;
   prompt: string;
   maxOutputTokens?: number;
+  temperature?: number;
 }): Promise<string> {
   return withModelFallback(async (modelName) => {
     const model = getClient().getGenerativeModel({
@@ -74,9 +78,47 @@ export async function generateText(opts: {
       contents: [{ role: "user", parts: [{ text: opts.prompt }] }],
       generationConfig: {
         maxOutputTokens: opts.maxOutputTokens ?? 1024,
-        temperature: 0.4,
+        temperature: opts.temperature ?? 0.4,
       },
     });
+    return result.response.text().trim();
+  });
+}
+
+/** Multi-turn chat — feels like a real conversation, not one-shot Q&A. */
+export async function generateChat(opts: {
+  system: string;
+  messages: Array<{ role: "user" | "model"; text: string }>;
+  maxOutputTokens?: number;
+  temperature?: number;
+}): Promise<string> {
+  return withModelFallback(async (modelName) => {
+    const model = getClient().getGenerativeModel({
+      model: modelName,
+      systemInstruction: opts.system,
+    });
+    const msgs = opts.messages.filter((m) => m.text.trim().length > 0);
+    if (msgs.length === 0) return "Йо, напиши что-нибудь.";
+
+    const history = msgs.slice(0, -1).map((m) => ({
+      role: m.role,
+      parts: [{ text: m.text }],
+    }));
+    const last = msgs[msgs.length - 1]!;
+
+    // Gemini requires history to start with user; drop leading model turns
+    while (history.length && history[0]!.role !== "user") history.shift();
+
+    const chat = model.startChat({
+      history,
+      generationConfig: {
+        maxOutputTokens: opts.maxOutputTokens ?? 900,
+        temperature: opts.temperature ?? 0.85,
+      },
+    });
+    const result = await chat.sendMessage(
+      last.role === "user" ? last.text : `Продолжи ответ: ${last.text}`
+    );
     return result.response.text().trim();
   });
 }
@@ -177,6 +219,10 @@ export async function runWithTools(opts: {
         role: m.role,
         parts: [{ text: m.text }],
       })),
+      generationConfig: {
+        maxOutputTokens: 900,
+        temperature: 0.7,
+      },
     });
 
     const last = opts.messages[opts.messages.length - 1]?.text ?? "";

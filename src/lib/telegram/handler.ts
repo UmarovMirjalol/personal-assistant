@@ -67,12 +67,11 @@ async function handleMessage(message: {
 }) {
   try {
     await handleMessageInner(message);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "unknown";
+  } catch {
     try {
       await sendMessage(
         message.chat.id,
-        `Ошибка: ${msg.slice(0, 350)}\n\nНапиши /start`
+        "Что-то пошло не так на секунду. Напиши ещё раз — или «помощь»."
       );
     } catch {
       // ignore
@@ -121,27 +120,23 @@ async function handleMessageInner(message: {
   if (text === "/start" || isNew) {
     try {
       const lines = [
-        "Привет. Я твой личный AI-помощник.",
+        "Йо. Я Aether — твой личный AI.",
         "",
-        "Пиши обычным языком — задачи, почта, research, план дня.",
+        "Пиши как другу: вопрос, мысль, план, что угодно.",
+        "Если надо по делу — напомни / задача / почта / research.",
         "",
         isGmailConnected(user)
           ? `Gmail: ${user.gmail_email ?? "подключён"}`
-          : "Gmail ещё не подключён — без него не смогу разбирать письма.",
+          : "Почту пока не вижу — подключим, когда надо.",
       ];
       const connectUrl = appUrl(`/connect?uid=${user.id}`);
       await sendMessage(message.chat.id, lines.join("\n"), {
         reply_markup: isGmailConnected(user)
-          ? mainMenuKeyboard()
+          ? undefined
           : gmailConnectKeyboard(connectUrl),
       });
-    } catch (err) {
-      // Fallback without buttons if Telegram rejects keyboard/URL
-      const msg = err instanceof Error ? err.message : "send failed";
-      await sendMessage(
-        message.chat.id,
-        `Привет. Я твой AI-помощник.\n\n(кнопки не отправились: ${msg.slice(0, 120)})\nНапиши: помощь`
-      );
+    } catch {
+      await sendMessage(message.chat.id, "Йо, на связи. Пиши что угодно.");
     }
     if (text === "/start") return;
   }
@@ -243,20 +238,21 @@ async function handleMessageInner(message: {
   try {
     const reply = await handleUserMessage({ user, settings, text });
     const lower = text.toLowerCase();
+    // Don't spam menu on every chat reply — only when asked
     const showMenu =
       lower.includes("меню") ||
-      lower.startsWith("/help") ||
-      reply.length < 500;
+      lower === "помощь" ||
+      lower === "help" ||
+      lower.startsWith("/help");
     await sendMessage(message.chat.id, reply, {
       reply_markup: showMenu ? mainMenuKeyboard() : undefined,
     });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "unknown";
-    const friendly = /503|high demand|unavailable|overloaded/i.test(msg)
-      ? "Gemini сейчас перегружен. Попробуй ещё раз через минуту — простые команды (/start, помощь, напомни…) работают всегда."
-      : `Не смог ответить: ${msg.includes("API") || msg.includes("key") || msg.includes("GEMINI") ? "проблема с AI API, попробуй ещё раз" : msg.slice(0, 180)}`;
+  } catch {
     try {
-      await sendMessage(message.chat.id, friendly);
+      await sendMessage(
+        message.chat.id,
+        "Сейчас туплю. Напиши ещё раз — или «помощь»."
+      );
     } catch {
       // ignore
     }
