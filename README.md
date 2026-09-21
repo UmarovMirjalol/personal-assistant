@@ -117,13 +117,16 @@ openssl rand -base64 32 # CRON_SECRET
 
 ### Polling fallback (always available)
 
-Vercel Hobby cron cannot poll every few minutes. Use a free external cron:
+Vercel Hobby cron is daily-only. For near-realtime mail alerts use either:
 
-- [cron-job.org](https://cron-job.org) every 5–10 min:
-  - `GET https://YOUR_DOMAIN/api/cron/email-poll?secret=CRON_SECRET`
-  - `GET https://YOUR_DOMAIN/api/cron/reminders?secret=CRON_SECRET`
+1. **GitHub Actions** (already in `.github/workflows/keep-alive.yml`) every 5 minutes  
+   Add repo secret `CRON_SECRET` (same value as Vercel).
+2. **cron-job.org** every 5–10 min:
+   - `GET https://YOUR_DOMAIN/api/cron/email-poll?secret=CRON_SECRET`
+   - `GET https://YOUR_DOMAIN/api/cron/gmail-refresh?secret=CRON_SECRET`
+   - `GET https://YOUR_DOMAIN/api/cron/reminders?secret=CRON_SECRET`
 
-Hourly Vercel cron for reminders is configured in `vercel.json` (Pro plans honor sub-daily schedules better).
+Daily Vercel crons in `vercel.json` are a safety net (briefing / poll / refresh / reminders).
 
 ---
 

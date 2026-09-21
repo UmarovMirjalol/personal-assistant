@@ -1,0 +1,56 @@
+name: Keep Aether alive
+
+on:
+  schedule:
+    # Every 5 minutes — Gmail poll + token refresh on Vercel
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refresh Gmail tokens
+        env:
+          APP_URL: https://personal-assistant-eight-lake.vercel.app
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -e
+          if [ -z "$CRON_SECRET" ]; then
+            echo "CRON_SECRET missing — skip"
+            exit 0
+          fi
+          curl -fsS -m 50 \
+            "${APP_URL}/api/cron/gmail-refresh?secret=${CRON_SECRET}" \
+            | tee /tmp/refresh.json
+          echo
+
+      - name: Poll inbox for new mail
+        env:
+          APP_URL: https://personal-assistant-eight-lake.vercel.app
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -e
+          if [ -z "$CRON_SECRET" ]; then
+            echo "CRON_SECRET missing — skip"
+            exit 0
+          fi
+          curl -fsS -m 55 \
+            "${APP_URL}/api/cron/email-poll?secret=${CRON_SECRET}" \
+            | tee /tmp/poll.json
+          echo
+
+      - name: Due reminders
+        env:
+          APP_URL: https://personal-assistant-eight-lake.vercel.app
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -e
+          if [ -z "$CRON_SECRET" ]; then
+            echo "CRON_SECRET missing — skip"
+            exit 0
+          fi
+          curl -fsS -m 40 \
+            "${APP_URL}/api/cron/reminders?secret=${CRON_SECRET}" \
+            | tee /tmp/reminders.json || true
+          echo
