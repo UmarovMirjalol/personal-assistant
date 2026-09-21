@@ -181,11 +181,15 @@ export async function appendConversation(
     return;
   }
   const db = getDb();
-  await db.from("conversation_messages").insert({
+  const { error } = await db.from("conversation_messages").insert({
     user_id: userId,
     role,
     content: content.slice(0, 4000),
   });
+  if (error) {
+    // Don't fail the whole reply for logging issues, but surface once
+    console.error("appendConversation failed", error.message);
+  }
 
   const { data: old } = await db
     .from("conversation_messages")
