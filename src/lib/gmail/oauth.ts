@@ -91,34 +91,72 @@ export async function getAuthorizedGmail(user: User) {
     throw new Error("GMAIL_NOT_CONNECTED");
   }
 
+  // When this host has no Google OAuth app creds, ask production to refresh
+  // into shared Supabase, then reload tokens.
+  const expiryMs = user.gmail_token_expiry
+    ? new Date(user.gmail_token_expiry).getTime()
+    : undefined;
+  const needsRefresh =
+    !expiryMs ||
+    !Number.isFinite(expiryMs) ||
+    expiryMs < Date.now() + 5 * 60_000;
+
+  if (needsRefresh && !hasGoogleOAuthCredentials()) {
+    await refreshTokensViaProduction();
+    const db = getDb();
+    const { data: fresh } = await db
+      .from("users")
+      .select("*")
+      .eq("id", user.id)
+      .single();
+    if (fresh) user = fresh as User;
+  }
+
   const access = user.gmail_access_token_enc
     ? decryptSecret(user.gmail_access_token_enc)
     : undefined;
   const refresh = user.gmail_refresh_token_enc
     ? decryptSecret(user.gmail_refresh_token_enc)
     : undefined;
-  const expiryMs = user.gmail_token_expiry
+  const expiryMs2 = user.gmail_token_expiry
     ? new Date(user.gmail_token_expiry).getTime()
     : undefined;
 
   const expired =
-    typeof expiryMs === "number" && Number.isFinite(expiryMs)
-      ? expiryMs < Date.now() - 30_000
+    typeof expiryMs2 === "number" && Number.isFinite(expiryMs2)
+      ? expiryMs2 < Date.now() - 30_000
       : false;
 
-  // Need refresh but OAuth app credentials are not available on this host
   if (expired && !hasGoogleOAuthCredentials()) {
-    if (!access) {
+    await refreshTokensViaProduction();
+    const db = getDb();
+    const { data: fresh } = await db
+      .from("users")
+      .select("*")
+      .eq("id", user.id)
+      .single();
+    if (fresh) {
+      user = fresh as User;
+    } else {
       throw new Error("GMAIL_REAUTH_REQUIRED");
     }
-    // Try the stored access token anyway — sometimes clock skew / soft expiry
   }
+
+  const access2 = user.gmail_access_token_enc
+    ? decryptSecret(user.gmail_access_token_enc)
+    : undefined;
+  const refresh2 = user.gmail_refresh_token_enc
+    ? decryptSecret(user.gmail_refresh_token_enc)
+    : undefined;
+  const expiryMs3 = user.gmail_token_expiry
+    ? new Date(user.gmail_token_expiry).getTime()
+    : undefined;
 
   const client = getApiAuthClient();
   client.setCredentials({
-    access_token: access,
-    refresh_token: hasGoogleOAuthCredentials() ? refresh : undefined,
-    expiry_date: expiryMs,
+    access_token: access2,
+    refresh_token: hasGoogleOAuthCredentials() ? refresh2 : undefined,
+    expiry_date: expiryMs3,
   });
 
   if (hasGoogleOAuthCredentials()) {
@@ -130,8 +168,8 @@ export async function getAuthorizedGmail(user: User) {
       }
     });
 
-    // Proactively refresh if close to expiry
-    if (expired || (expiryMs && expiryMs < Date.now() + 60_000)) {
+    // Refresh early — Gmail access tokens live ~1h
+    if (!expiryMs3 || expiryMs3 < Date.now() + 30 * 60_000) {
       try {
         const { credentials } = await client.refreshAccessToken();
         client.setCredentials(credentials);
@@ -143,6 +181,31 @@ export async function getAuthorizedGmail(user: User) {
   }
 
   return google.gmail({ version: "v1", auth: client });
+}
+
+/** Hit production cron to refresh Gmail tokens into shared Supabase. */
+async function refreshTokensViaProduction(): Promise<void> {
+  const e = getEnv();
+  const secret = e.CRON_SECRET;
+  const base =
+    e.APP_URL?.replace(/\/$/, "") ||
+    "https://personal-assistant-eight-lake.vercel.app";
+  if (!secret) return;
+  try {
+    const urls = [
+      `${base}/api/cron/gmail-refresh?secret=${encodeURIComponent(secret)}`,
+      `${base}/api/cron/email-poll?secret=${encodeURIComponent(secret)}`,
+    ];
+    for (const url of urls) {
+      const res = await fetch(url, {
+        method: "GET",
+        signal: AbortSignal.timeout(45_000),
+      });
+      if (res.ok) return;
+    }
+  } catch {
+    // caller will fail with REAUTH if still expired
+  }
 }
 
 export function isGmailConnected(user: User): boolean {
