@@ -19,11 +19,23 @@ export async function sendMessage(
   const parts = splitTelegramMessages(text);
   let last = null as Awaited<ReturnType<typeof b.api.sendMessage>> | null;
   for (let i = 0; i < parts.length; i++) {
-    last = await b.api.sendMessage(chatId, parts[i], {
-      reply_markup: i === parts.length - 1 ? opts?.reply_markup : undefined,
-      parse_mode: opts?.parse_mode,
-      link_preview_options: { is_disabled: true },
-    });
+    try {
+      last = await b.api.sendMessage(chatId, parts[i], {
+        reply_markup: i === parts.length - 1 ? opts?.reply_markup : undefined,
+        parse_mode: opts?.parse_mode,
+        // older-compatible flag (avoids Bot API quirks with link_preview_options)
+        disable_web_page_preview: true,
+      } as Parameters<typeof b.api.sendMessage>[2]);
+    } catch (err) {
+      // Retry once without keyboard / parse_mode
+      if (opts?.reply_markup || opts?.parse_mode) {
+        last = await b.api.sendMessage(chatId, parts[i], {
+          disable_web_page_preview: true,
+        } as Parameters<typeof b.api.sendMessage>[2]);
+      } else {
+        throw err;
+      }
+    }
   }
   return last;
 }
@@ -40,8 +52,8 @@ export async function editMessage(
 ) {
   await getBot().api.editMessageText(chatId, messageId, text, {
     reply_markup,
-    link_preview_options: { is_disabled: true },
-  });
+    disable_web_page_preview: true,
+  } as Parameters<Bot["api"]["editMessageText"]>[3]);
 }
 
 export function webhookPath(): string {

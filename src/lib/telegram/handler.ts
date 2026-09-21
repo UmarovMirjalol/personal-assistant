@@ -65,6 +65,27 @@ async function handleMessage(message: {
   chat: { id: number };
   from?: TgUser;
 }) {
+  try {
+    await handleMessageInner(message);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "unknown";
+    try {
+      await sendMessage(
+        message.chat.id,
+        `Ошибка: ${msg.slice(0, 350)}\n\nНапиши /start`
+      );
+    } catch {
+      // ignore
+    }
+  }
+}
+
+async function handleMessageInner(message: {
+  message_id: number;
+  text?: string;
+  chat: { id: number };
+  from?: TgUser;
+}) {
   const from = message.from!;
   let text = sanitizeUserText(message.text ?? "");
   if (!text) return;
@@ -98,20 +119,30 @@ async function handleMessage(message: {
   const { user, settings, isNew } = userPack;
 
   if (text === "/start" || isNew) {
-    const lines = [
-      "Привет. Я твой личный AI-помощник.",
-      "",
-      "Пиши обычным языком — задачи, почта, research, план дня.",
-      "",
-      isGmailConnected(user)
-        ? `Gmail: ${user.gmail_email ?? "подключён"}`
-        : "Gmail ещё не подключён — без него не смогу разбирать письма.",
-    ];
-    await sendMessage(message.chat.id, lines.join("\n"), {
-      reply_markup: isGmailConnected(user)
-        ? mainMenuKeyboard()
-        : gmailConnectKeyboard(appUrl(`/connect?uid=${user.id}`)),
-    });
+    try {
+      const lines = [
+        "Привет. Я твой личный AI-помощник.",
+        "",
+        "Пиши обычным языком — задачи, почта, research, план дня.",
+        "",
+        isGmailConnected(user)
+          ? `Gmail: ${user.gmail_email ?? "подключён"}`
+          : "Gmail ещё не подключён — без него не смогу разбирать письма.",
+      ];
+      const connectUrl = appUrl(`/connect?uid=${user.id}`);
+      await sendMessage(message.chat.id, lines.join("\n"), {
+        reply_markup: isGmailConnected(user)
+          ? mainMenuKeyboard()
+          : gmailConnectKeyboard(connectUrl),
+      });
+    } catch (err) {
+      // Fallback without buttons if Telegram rejects keyboard/URL
+      const msg = err instanceof Error ? err.message : "send failed";
+      await sendMessage(
+        message.chat.id,
+        `Привет. Я твой AI-помощник.\n\n(кнопки не отправились: ${msg.slice(0, 120)})\nНапиши: помощь`
+      );
+    }
     if (text === "/start") return;
   }
 
