@@ -68,8 +68,15 @@ export async function processNewEmailsForUser(
     const { rowId, summary, analysis } = await analyzeAndStore(user, parsed);
     processed += 1;
 
+    const blob = `${parsed.fromEmail ?? ""} ${parsed.subject ?? ""} ${parsed.snippet ?? ""}`;
+    const admissionsHot =
+      /admission|admissions|application|scholarship|fee\s*waiver|interview|decision|financial\s*aid|common\s*app|css\s*profile|fafsa|evaluation\s*form|professor|enrol?l/i.test(
+        blob
+      );
+
     const notify =
       opts.forceNotify ||
+      admissionsHot ||
       shouldNotify(analysis.priority, settings.notify_email_priority);
 
     if (notify && !summary.notified) {

@@ -66,17 +66,40 @@ async function pollReminders() {
   }
 }
 
-async function pollLocal() {
+async function pollEmailViaVercel() {
+  if (!CRON_SECRET) return;
   try {
-    const { processAllConnectedUsers } = await import("../src/lib/gmail/sync");
-    const results = await processAllConnectedUsers();
-    console.log(new Date().toISOString(), "poll", JSON.stringify(results));
+    const res = await fetch(
+      `${APP_URL}/api/cron/email-poll?secret=${encodeURIComponent(CRON_SECRET)}`,
+      { signal: AbortSignal.timeout(55_000) }
+    );
+    const text = await res.text();
+    console.log(new Date().toISOString(), "email-poll", res.status, text.slice(0, 220));
   } catch (err) {
     console.error(
       new Date().toISOString(),
-      "poll fail",
+      "email-poll fail",
       err instanceof Error ? err.message : err
     );
+  }
+}
+
+async function pollLocal() {
+  // Fallback only — production poll on Vercel is source of truth
+  try {
+    await pollEmailViaVercel();
+  } catch {
+    try {
+      const { processAllConnectedUsers } = await import("../src/lib/gmail/sync");
+      const results = await processAllConnectedUsers();
+      console.log(new Date().toISOString(), "poll-local", JSON.stringify(results));
+    } catch (err) {
+      console.error(
+        new Date().toISOString(),
+        "poll fail",
+        err instanceof Error ? err.message : err
+      );
+    }
   }
 }
 
