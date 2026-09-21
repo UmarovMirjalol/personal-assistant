@@ -60,10 +60,11 @@ export function requireEnv<K extends keyof AppEnv>(key: K): NonNullable<AppEnv[K
 }
 
 export function appUrl(path = ""): string {
-  const base =
-    getEnv().NEXT_PUBLIC_APP_URL ||
-    process.env.VERCEL_URL && `https://${process.env.VERCEL_URL}` ||
-    "http://127.0.0.1:43127";
+  const fromEnv = getEnv().NEXT_PUBLIC_APP_URL;
+  const fromVercel = process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}`
+    : undefined;
+  const base = fromEnv || fromVercel || "http://127.0.0.1:43127";
   return `${String(base).replace(/\/$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
