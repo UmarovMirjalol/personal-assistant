@@ -394,15 +394,17 @@ async function toolGetEmails(ctx: ToolContext, args: Record<string, unknown>) {
 
 async function toolGetEmail(ctx: ToolContext, emailId: string) {
   await ensureGmail(ctx);
-  const db = getDb();
-  const { data: byDb } = await db
-    .from("emails")
-    .select("*")
-    .eq("user_id", ctx.user.id)
-    .eq("id", emailId)
-    .maybeSingle();
-
-  const gmailId = byDb?.gmail_id ?? emailId;
+  let gmailId = emailId;
+  if (isDbConfigured()) {
+    const db = getDb();
+    const { data: byDb } = await db
+      .from("emails")
+      .select("*")
+      .eq("user_id", ctx.user.id)
+      .eq("id", emailId)
+      .maybeSingle();
+    gmailId = byDb?.gmail_id ?? emailId;
+  }
   const parsed = await getEmailByGmailId(ctx.user, gmailId);
   const { rowId, analysis, summary } = await analyzeAndStore(ctx.user, parsed);
   return {
@@ -478,17 +480,30 @@ Use 24h times. Infer reasonable blocks. No markdown.`,
 
 async function toolDraftEmail(ctx: ToolContext, emailId: string, instructions?: string) {
   await ensureGmail(ctx);
-  const db = getDb();
   let body = "";
   let subject = "";
   let from = "";
+  let row: {
+    id?: string;
+    gmail_id?: string;
+    from_email?: string | null;
+    thread_id?: string | null;
+    body_excerpt?: string | null;
+    snippet?: string | null;
+    subject?: string | null;
+    from_name?: string | null;
+  } | null = null;
 
-  const { data: row } = await db
-    .from("emails")
-    .select("*, email_summaries(*)")
-    .eq("user_id", ctx.user.id)
-    .eq("id", emailId)
-    .maybeSingle();
+  if (isDbConfigured()) {
+    const db = getDb();
+    const { data } = await db
+      .from("emails")
+      .select("*, email_summaries(*)")
+      .eq("user_id", ctx.user.id)
+      .eq("id", emailId)
+      .maybeSingle();
+    row = data;
+  }
 
   if (row) {
     body = row.body_excerpt ?? row.snippet ?? "";
@@ -512,27 +527,39 @@ async function toolDraftEmail(ctx: ToolContext, emailId: string, instructions?: 
     maxOutputTokens: 700,
   });
 
-  // Store pending draft action
-  const { data: pending } = await db
-    .from("pending_actions")
-    .insert({
+  const payload = {
+    email_id: row?.id ?? emailId,
+    gmail_id: row?.gmail_id ?? emailId,
+    to: row?.from_email,
+    subject,
+    thread_id: row?.thread_id,
+    draft,
+  };
+
+  let pendingId: string | undefined;
+  if (isDbConfigured()) {
+    const db = getDb();
+    const { data: pending } = await db
+      .from("pending_actions")
+      .insert({
+        user_id: ctx.user.id,
+        kind: "draft_reply",
+        payload,
+      })
+      .select("*")
+      .single();
+    pendingId = pending?.id;
+    if (row?.id) {
+      await db.from("email_summaries").update({ draft_reply: draft }).eq("email_id", row.id);
+    }
+  } else {
+    const pending = await localDb.createPending({
       user_id: ctx.user.id,
       kind: "draft_reply",
-      payload: {
-        email_id: row?.id ?? emailId,
-        gmail_id: row?.gmail_id ?? emailId,
-        to: row?.from_email,
-        subject,
-        thread_id: row?.thread_id,
-        draft,
-      },
-    })
-    .select("*")
-    .single();
-
-  if (row?.id) {
-    await db.from("email_summaries").update({ draft_reply: draft }).eq("email_id", row.id);
+      payload,
+    });
+    pendingId = pending.id;
   }
 
-  return { draft, pending_id: pending?.id, email_id: row?.id ?? emailId };
+  return { draft, pending_id: pendingId, email_id: row?.id ?? emailId };
 }

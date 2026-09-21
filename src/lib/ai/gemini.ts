@@ -24,7 +24,7 @@ export async function generateText(opts: {
   maxOutputTokens?: number;
 }): Promise<string> {
   const model = getClient().getGenerativeModel({
-    model: getEnv().GEMINI_MODEL || "gemini-2.0-flash",
+    model: getEnv().GEMINI_MODEL || "gemini-3.6-flash",
     systemInstruction: opts.system,
   });
   const result = await model.generateContent({
@@ -79,7 +79,7 @@ export async function runWithTools(opts: {
   const tool: Tool = { functionDeclarations: opts.tools };
 
   const model = genAI.getGenerativeModel({
-    model: getEnv().GEMINI_MODEL || "gemini-2.0-flash",
+    model: getEnv().GEMINI_MODEL || "gemini-3.6-flash",
     systemInstruction: opts.system,
     tools: [tool],
   });

@@ -64,7 +64,7 @@ Copy `.env.example` → `.env.local` (local) and set the same keys in Vercel.
 | `GOOGLE_REDIRECT_URI` | yes | `{APP_URL}/api/auth/google/callback` |
 | `GMAIL_PUBSUB_TOPIC` | no | `projects/PROJECT/topics/TOPIC` for push |
 | `GEMINI_API_KEY` | yes | Google AI Studio |
-| `GEMINI_MODEL` | no | Default `gemini-2.0-flash` |
+| `GEMINI_MODEL` | no | Default `gemini-3.6-flash` |
 | `NEXT_PUBLIC_SUPABASE_URL` | yes | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | Service role (server only) |
 | `TOKEN_ENCRYPTION_KEY` | yes | 64-char hex (or any long secret) |
@@ -131,7 +131,7 @@ Hourly Vercel cron for reminders is configured in `vercel.json` (Pro plans honor
 
 1. Open [Google AI Studio](https://aistudio.google.com/apikey)
 2. Create API key → `GEMINI_API_KEY`
-3. Default model `gemini-2.0-flash` (generous free tier). Keep prompts/tool results short to stay within limits.
+3. Default model `gemini-3.6-flash` (generous free tier). Keep prompts/tool results short to stay within limits.
 
 ---
 
