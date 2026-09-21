@@ -119,8 +119,8 @@ openssl rand -base64 32 # CRON_SECRET
 
 Vercel Hobby cron is daily-only. For near-realtime mail alerts use either:
 
-1. **GitHub Actions** (already in `.github/workflows/keep-alive.yml`) every 5 minutes  
-   Add repo secret `CRON_SECRET` (same value as Vercel).
+1. **GitHub Actions** (recipe in `docs/keep-alive.github-actions.yml`) every 5 minutes  
+   Put the file under `.github/workflows/` and add repo secret `CRON_SECRET` (same value as Vercel).
 2. **cron-job.org** every 5–10 min:
    - `GET https://YOUR_DOMAIN/api/cron/email-poll?secret=CRON_SECRET`
    - `GET https://YOUR_DOMAIN/api/cron/gmail-refresh?secret=CRON_SECRET`
