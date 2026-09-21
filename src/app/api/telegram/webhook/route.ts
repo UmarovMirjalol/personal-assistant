@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { after } from "next/server";
 import { getEnv } from "@/lib/env";
 import { telegramUpdateSchema } from "@/lib/security/validate";
 import { processTelegramUpdate } from "@/lib/telegram/handler";
@@ -10,7 +9,7 @@ export const maxDuration = 60;
 
 /**
  * CRITICAL: Telegram kills webhooks that take > ~60s.
- * Always ACK immediately, then process in the background.
+ * ACK immediately, then process in the background (Node keeps the promise alive).
  */
 export async function POST(req: NextRequest) {
   const secret = getEnv().TELEGRAM_WEBHOOK_SECRET;
@@ -36,7 +35,8 @@ export async function POST(req: NextRequest) {
   const update = parsed.data;
   const debug = req.nextUrl.searchParams.get("debug") === "1";
 
-  after(async () => {
+  // Fire-and-forget — must NOT await. Local Next + Vercel Node both keep this alive.
+  void (async () => {
     try {
       await processTelegramUpdate(update);
     } catch (err) {
@@ -50,11 +50,9 @@ export async function POST(req: NextRequest) {
           // ignore
         }
       }
-      if (debug) {
-        console.error("telegram webhook handler failed", err);
-      }
+      if (debug) console.error("telegram webhook handler failed", err);
     }
-  });
+  })();
 
   return NextResponse.json({ ok: true });
 }

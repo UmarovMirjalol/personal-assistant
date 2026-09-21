@@ -173,6 +173,14 @@ async function handleMessageInner(message: {
       // Direct Gmail path — no AI-tool flakiness, real inbox answers
       const reply = await directEmailAnswer(user, text);
       await sendMessage(message.chat.id, reply);
+      // Persist so we can verify / continue the chat context
+      try {
+        const { appendConversation } = await import("@/lib/db/users");
+        await appendConversation(user.id, "user", text);
+        await appendConversation(user.id, "assistant", reply);
+      } catch {
+        // ignore
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "";
       await sendMessage(
