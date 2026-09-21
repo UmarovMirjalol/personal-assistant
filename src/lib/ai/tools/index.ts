@@ -1,4 +1,10 @@
-import { SchemaType, type AgentToolDeclaration } from "@/lib/ai/gemini";
+import { z } from "zod";
+import {
+  SchemaType,
+  type AgentToolDeclaration,
+  generateJson,
+  generateText,
+} from "@/lib/ai/gemini";
 import type { User, Settings } from "@/lib/db/client";
 import { createTask, listTasks, completeTask, getTodayPlan } from "@/lib/db/tasks";
 import { createReminder, listReminders, cancelReminder } from "@/lib/db/reminders";
@@ -14,7 +20,6 @@ import { localDb } from "@/lib/db/local-store";
 import { formatEmailDigest, formatEmailNotification } from "@/lib/telegram/format";
 import { runResearch, webSearch } from "@/lib/research/search";
 import { addMemory, forgetMemory, listMemory, clearAllMemory } from "@/lib/db/users";
-import { generateText } from "@/lib/ai/gemini";
 import { parseRelativeTime } from "@/lib/reminders/time";
 
 export type ToolContext = {
