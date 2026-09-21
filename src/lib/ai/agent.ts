@@ -43,8 +43,8 @@ const TOOL_SYSTEM = `${CHAT_SYSTEM}
 - research / поиск → research / web_search
 - черновик ответа на письмо → draft_email (никогда не отправляй сам)
 
+Если tool вернул GMAIL_NOT_CONNECTED или GMAIL_REAUTH_REQUIRED — скажи нормальным языком переподключить Gmail по ссылке connect_url.
 На обычный smalltalk tools НЕ вызывай.
-Если Gmail не подключён — скажи обычным языком и дай ссылку.
 Отвечай готовым текстом человеку, не JSON.`;
 
 /** Only clear action intents — casual chat must NOT go through tools. */
@@ -112,6 +112,17 @@ export async function handleUserMessage(opts: {
                 return {
                   error: "GMAIL_NOT_CONNECTED",
                   message: "Gmail не подключён",
+                  connect_url: appUrl(`/connect?uid=${user.id}`),
+                };
+              }
+              if (
+                msg === "GMAIL_REAUTH_REQUIRED" ||
+                msg.includes("GOOGLE_OAUTH_NOT_CONFIGURED")
+              ) {
+                return {
+                  error: "GMAIL_REAUTH_REQUIRED",
+                  message:
+                    "Сессия Gmail истекла или OAuth не настроен. Нужно переподключить почту.",
                   connect_url: appUrl(`/connect?uid=${user.id}`),
                 };
               }

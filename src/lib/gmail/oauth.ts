@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { getEnv, requireEnv, appUrl } from "@/lib/env";
+import { getEnv, appUrl } from "@/lib/env";
 import { encryptSecret, decryptSecret } from "@/lib/crypto/tokens";
 import { getDb, type User } from "@/lib/db/client";
 
@@ -11,12 +11,37 @@ const SCOPES = [
   "email",
 ];
 
+export function hasGoogleOAuthCredentials(): boolean {
+  const e = getEnv();
+  return Boolean(e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET);
+}
+
 export function getOAuthClient() {
+  const e = getEnv();
+  if (!e.GOOGLE_CLIENT_ID || !e.GOOGLE_CLIENT_SECRET) {
+    throw new Error(
+      "GOOGLE_OAUTH_NOT_CONFIGURED: Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET"
+    );
+  }
   return new google.auth.OAuth2(
-    requireEnv("GOOGLE_CLIENT_ID"),
-    requireEnv("GOOGLE_CLIENT_SECRET"),
-    getEnv().GOOGLE_REDIRECT_URI || appUrl("/api/auth/google/callback")
+    e.GOOGLE_CLIENT_ID,
+    e.GOOGLE_CLIENT_SECRET,
+    e.GOOGLE_REDIRECT_URI || appUrl("/api/auth/google/callback")
   );
+}
+
+/** Client for API calls — works with access token even if OAuth app creds are missing. */
+function getApiAuthClient() {
+  const e = getEnv();
+  if (e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET) {
+    return new google.auth.OAuth2(
+      e.GOOGLE_CLIENT_ID,
+      e.GOOGLE_CLIENT_SECRET,
+      e.GOOGLE_REDIRECT_URI || appUrl("/api/auth/google/callback")
+    );
+  }
+  // Access-token-only mode (no refresh). Enough for live inbox while token is valid.
+  return new google.auth.OAuth2();
 }
 
 export function getGmailAuthUrl(state: string): string {
@@ -66,29 +91,56 @@ export async function getAuthorizedGmail(user: User) {
     throw new Error("GMAIL_NOT_CONNECTED");
   }
 
-  const client = getOAuthClient();
   const access = user.gmail_access_token_enc
     ? decryptSecret(user.gmail_access_token_enc)
     : undefined;
   const refresh = user.gmail_refresh_token_enc
     ? decryptSecret(user.gmail_refresh_token_enc)
     : undefined;
+  const expiryMs = user.gmail_token_expiry
+    ? new Date(user.gmail_token_expiry).getTime()
+    : undefined;
 
+  const expired =
+    typeof expiryMs === "number" && Number.isFinite(expiryMs)
+      ? expiryMs < Date.now() - 30_000
+      : false;
+
+  // Need refresh but OAuth app credentials are not available on this host
+  if (expired && !hasGoogleOAuthCredentials()) {
+    if (!access) {
+      throw new Error("GMAIL_REAUTH_REQUIRED");
+    }
+    // Try the stored access token anyway — sometimes clock skew / soft expiry
+  }
+
+  const client = getApiAuthClient();
   client.setCredentials({
     access_token: access,
-    refresh_token: refresh,
-    expiry_date: user.gmail_token_expiry
-      ? new Date(user.gmail_token_expiry).getTime()
-      : undefined,
+    refresh_token: hasGoogleOAuthCredentials() ? refresh : undefined,
+    expiry_date: expiryMs,
   });
 
-  client.on("tokens", async (tokens) => {
-    try {
-      await saveGmailTokens(user.id, tokens);
-    } catch {
-      // avoid logging token material
+  if (hasGoogleOAuthCredentials()) {
+    client.on("tokens", async (tokens) => {
+      try {
+        await saveGmailTokens(user.id, tokens);
+      } catch {
+        // avoid logging token material
+      }
+    });
+
+    // Proactively refresh if close to expiry
+    if (expired || (expiryMs && expiryMs < Date.now() + 60_000)) {
+      try {
+        const { credentials } = await client.refreshAccessToken();
+        client.setCredentials(credentials);
+        await saveGmailTokens(user.id, credentials);
+      } catch {
+        throw new Error("GMAIL_REAUTH_REQUIRED");
+      }
     }
-  });
+  }
 
   return google.gmail({ version: "v1", auth: client });
 }
