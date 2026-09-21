@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start -p 43127",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "poll": "tsx scripts/telegram-poll.ts",
+    "dev:all": "echo run npm run dev and keep tunnel"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -28,9 +30,11 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/uuid": "^10.0.0",
+    "dotenv": "^18.0.1",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }

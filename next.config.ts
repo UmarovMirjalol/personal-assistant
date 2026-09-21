@@ -26,6 +26,7 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ['*.trycloudflare.com', 'mailing-outline-tex-joins.trycloudflare.com'],
   poweredByHeader: false,
   async headers() {
     return [

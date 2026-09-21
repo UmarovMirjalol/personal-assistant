@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db/client";
+import { isDbConfigured, getDb } from "@/lib/db/client";
 
 /**
  * Simple DB-backed sliding window rate limiter.
@@ -12,6 +12,20 @@ export async function checkRateLimit(
   windowMs: number
 ): Promise<{ allowed: boolean; remaining: number }> {
   const now = Date.now();
+
+  const mem = () => {
+    const entry = memory.get(key);
+    if (!entry || now - entry.windowStart > windowMs) {
+      memory.set(key, { count: 1, windowStart: now });
+      return { allowed: true, remaining: limit - 1 };
+    }
+    if (entry.count >= limit) return { allowed: false, remaining: 0 };
+    entry.count += 1;
+    return { allowed: true, remaining: limit - entry.count };
+  };
+
+  if (!isDbConfigured()) return mem();
+
   try {
     const db = getDb();
     const { data } = await db.from("rate_limits").select("*").eq("key", key).maybeSingle();
@@ -44,13 +58,6 @@ export async function checkRateLimit(
       .eq("key", key);
     return { allowed: true, remaining: limit - data.count - 1 };
   } catch {
-    const entry = memory.get(key);
-    if (!entry || now - entry.windowStart > windowMs) {
-      memory.set(key, { count: 1, windowStart: now });
-      return { allowed: true, remaining: limit - 1 };
-    }
-    if (entry.count >= limit) return { allowed: false, remaining: 0 };
-    entry.count += 1;
-    return { allowed: true, remaining: limit - entry.count };
+    return mem();
   }
 }

@@ -1,4 +1,9 @@
-import { getDb, type Task } from "@/lib/db/client";
+import { getDb, isDbConfigured, type Task } from "@/lib/db/client";
+import { localDb } from "@/lib/db/local-store";
+
+function useLocal() {
+  return !isDbConfigured();
+}
 
 export async function createTask(input: {
   userId: string;
@@ -10,6 +15,21 @@ export async function createTask(input: {
   scheduledEnd?: string | null;
   source?: string;
 }): Promise<Task> {
+  if (useLocal()) {
+    return localDb.createTask({
+      user_id: input.userId,
+      title: input.title,
+      notes: input.notes ?? null,
+      status: "open",
+      priority: input.priority ?? "medium",
+      due_at: input.dueAt ?? null,
+      scheduled_start: input.scheduledStart ?? null,
+      scheduled_end: input.scheduledEnd ?? null,
+      source: input.source ?? "manual",
+      source_email_id: null,
+    });
+  }
+
   const db = getDb();
   const { data, error } = await db
     .from("tasks")
@@ -26,13 +46,18 @@ export async function createTask(input: {
     .select("*")
     .single();
   if (error || !data) throw error ?? new Error("create task failed");
-  return data;
+  return data as Task;
 }
 
 export async function listTasks(
   userId: string,
   opts: { status?: "open" | "done" | "cancelled" | "all"; limit?: number } = {}
 ): Promise<Task[]> {
+  if (useLocal()) {
+    const rows = await localDb.listTasks(userId, opts.status ?? "open");
+    return rows.slice(0, opts.limit ?? 30);
+  }
+
   const db = getDb();
   let q = db
     .from("tasks")
@@ -49,10 +74,22 @@ export async function listTasks(
 
   const { data, error } = await q;
   if (error) throw error;
-  return data ?? [];
+  return (data as Task[]) ?? [];
 }
 
 export async function completeTask(userId: string, taskIdOrTitle: string): Promise<Task | null> {
+  if (useLocal()) {
+    const open = await localDb.listTasks(userId, "open");
+    const task =
+      open.find((t) => t.id === taskIdOrTitle) ||
+      open.find((t) => t.title.toLowerCase().includes(taskIdOrTitle.toLowerCase()));
+    if (!task) return null;
+    return localDb.updateTask(task.id, {
+      status: "done",
+      completed_at: new Date().toISOString(),
+    });
+  }
+
   const db = getDb();
   const { data: byId } = await db
     .from("tasks")
@@ -61,7 +98,7 @@ export async function completeTask(userId: string, taskIdOrTitle: string): Promi
     .eq("id", taskIdOrTitle)
     .maybeSingle();
 
-  let task = byId;
+  let task = byId as Task | null;
   if (!task) {
     const { data: list } = await db
       .from("tasks")
@@ -70,7 +107,7 @@ export async function completeTask(userId: string, taskIdOrTitle: string): Promi
       .eq("status", "open")
       .ilike("title", `%${taskIdOrTitle}%`)
       .limit(1);
-    task = list?.[0] ?? null;
+    task = (list?.[0] as Task) ?? null;
   }
   if (!task) return null;
 
@@ -81,7 +118,7 @@ export async function completeTask(userId: string, taskIdOrTitle: string): Promi
     .select("*")
     .single();
   if (error) throw error;
-  return data;
+  return data as Task;
 }
 
 export async function getTodayPlan(userId: string, timezone = "UTC") {

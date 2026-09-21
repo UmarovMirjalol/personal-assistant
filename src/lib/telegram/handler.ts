@@ -23,7 +23,8 @@ import {
 import { listTasks, getTodayPlan, createTask } from "@/lib/db/tasks";
 import { listReminders, createReminder } from "@/lib/db/reminders";
 import { appUrl } from "@/lib/env";
-import { getDb } from "@/lib/db/client";
+import { getDb, isDbConfigured } from "@/lib/db/client";
+import { localDb } from "@/lib/db/local-store";
 import { sendGmailReply, isGmailConnected } from "@/lib/gmail";
 import { parseRelativeTime } from "@/lib/reminders/time";
 import { executeTool } from "@/lib/ai/tools";
@@ -167,20 +168,8 @@ async function handleMessage(message: {
   }
 
   // Pending draft edit mode
-  const db = getDb();
-  const { data: editing } = await db
-    .from("pending_actions")
-    .select("*")
-    .eq("user_id", user.id)
-    .eq("status", "pending")
-    .eq("kind", "draft_reply")
-    .contains("payload", { awaiting_edit: true })
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  // Supabase contains may not work for awaiting_edit — fallback query
-  if (!editing) {
+  if (isDbConfigured()) {
+    const db = getDb();
     const { data: pendings } = await db
       .from("pending_actions")
       .select("*")
@@ -196,6 +185,18 @@ async function handleMessage(message: {
     if (awaitEdit) {
       const payload = { ...(awaitEdit.payload as object), draft: text, awaiting_edit: false };
       await db.from("pending_actions").update({ payload }).eq("id", awaitEdit.id);
+      await sendMessage(message.chat.id, `Обновлённый черновик:\n\n${text}`, {
+        reply_markup: draftReplyKeyboard(awaitEdit.id),
+      });
+      return;
+    }
+  } else {
+    const pendings = await localDb.listPending(user.id, "draft_reply");
+    const awaitEdit = pendings.find((p) => (p.payload as { awaiting_edit?: boolean }).awaiting_edit);
+    if (awaitEdit) {
+      await localDb.updatePending(awaitEdit.id, {
+        payload: { ...awaitEdit.payload, draft: text, awaiting_edit: false },
+      });
       await sendMessage(message.chat.id, `Обновлённый черновик:\n\n${text}`, {
         reply_markup: draftReplyKeyboard(awaitEdit.id),
       });
@@ -304,21 +305,27 @@ async function handleCallback(cq: {
 
   if (data.startsWith("act:task:")) {
     const emailId = data.replace("act:task:", "");
-    const db = getDb();
-    const { data: email } = await db
-      .from("emails")
-      .select("subject, email_summaries(action_required, purpose)")
-      .eq("id", emailId)
-      .maybeSingle();
-    const summaries = email?.email_summaries as
-      | { action_required?: string; purpose?: string }
-      | { action_required?: string; purpose?: string }[]
-      | null;
-    const s = Array.isArray(summaries) ? summaries[0] : summaries;
-    const title = s?.action_required && s.action_required !== "None"
-      ? s.action_required
-      : email?.subject || "Email follow-up";
-    await createTask({ userId: user.id, title, source: "email", notes: s?.purpose ?? undefined });
+    let title = "Email follow-up";
+    let notes: string | undefined;
+    if (isDbConfigured()) {
+      const db = getDb();
+      const { data: email } = await db
+        .from("emails")
+        .select("subject, email_summaries(action_required, purpose)")
+        .eq("id", emailId)
+        .maybeSingle();
+      const summaries = email?.email_summaries as
+        | { action_required?: string; purpose?: string }
+        | { action_required?: string; purpose?: string }[]
+        | null;
+      const s = Array.isArray(summaries) ? summaries[0] : summaries;
+      title =
+        s?.action_required && s.action_required !== "None"
+          ? s.action_required
+          : email?.subject || "Email follow-up";
+      notes = s?.purpose ?? undefined;
+    }
+    await createTask({ userId: user.id, title, source: "email", notes });
     await sendMessage(chatId, `Задача создана: ${title}`);
     return;
   }
@@ -406,13 +413,26 @@ async function handleDraftAction(
   data: string
 ) {
   const [, action, pendingId] = data.split(":");
-  const db = getDb();
-  const { data: pending } = await db
-    .from("pending_actions")
-    .select("*")
-    .eq("id", pendingId)
-    .eq("user_id", user.id)
-    .maybeSingle();
+
+  let pending: {
+    id: string;
+    status: string;
+    payload: Record<string, unknown>;
+  } | null = null;
+
+  if (isDbConfigured()) {
+    const db = getDb();
+    const { data } = await db
+      .from("pending_actions")
+      .select("*")
+      .eq("id", pendingId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    pending = data as typeof pending;
+  } else {
+    const row = await localDb.getPending(pendingId);
+    pending = row && row.user_id === user.id ? row : null;
+  }
 
   if (!pending || pending.status !== "pending") {
     await sendMessage(chatId, "Черновик устарел.");
@@ -426,17 +446,22 @@ async function handleDraftAction(
     thread_id?: string;
   };
 
+  const setPending = async (patch: Record<string, unknown>) => {
+    if (isDbConfigured()) {
+      await getDb().from("pending_actions").update(patch).eq("id", pending!.id);
+    } else {
+      await localDb.updatePending(pending!.id, patch as never);
+    }
+  };
+
   if (action === "cancel") {
-    await db.from("pending_actions").update({ status: "cancelled" }).eq("id", pending.id);
+    await setPending({ status: "cancelled" });
     await sendMessage(chatId, "Отменено. Письмо не отправлено.");
     return;
   }
 
   if (action === "edit") {
-    await db
-      .from("pending_actions")
-      .update({ payload: { ...payload, awaiting_edit: true } })
-      .eq("id", pending.id);
+    await setPending({ payload: { ...payload, awaiting_edit: true } });
     await sendMessage(chatId, "Пришли новый текст ответа одним сообщением.");
     return;
   }
@@ -456,7 +481,7 @@ async function handleDraftAction(
       body: payload.draft,
       threadId: payload.thread_id,
     });
-    await db.from("pending_actions").update({ status: "confirmed" }).eq("id", pending.id);
+    await setPending({ status: "confirmed" });
     await sendMessage(chatId, "Отправлено.");
   }
 }

@@ -1,6 +1,6 @@
-import type { User, Settings } from "@/lib/db/client";
-import { runWithTools, isGeminiConfigured, generateText } from "@/lib/ai/gemini";
+import { isGeminiConfigured, generateText, runWithTools } from "@/lib/ai/gemini";
 import { toolDeclarations, executeTool } from "@/lib/ai/tools";
+import type { User, Settings } from "@/lib/db/client";
 import {
   getRecentConversation,
   appendConversation,
@@ -9,8 +9,9 @@ import {
 import { appUrl } from "@/lib/env";
 import { isGmailConnected } from "@/lib/gmail";
 import { formatTasks, formatReminders, formatTodayPlan } from "@/lib/telegram/format";
-import { listTasks, getTodayPlan } from "@/lib/db/tasks";
-import { listReminders } from "@/lib/db/reminders";
+import { listTasks, getTodayPlan, createTask } from "@/lib/db/tasks";
+import { listReminders, createReminder } from "@/lib/db/reminders";
+import { parseRelativeTime } from "@/lib/reminders/time";
 import { runResearch } from "@/lib/research/search";
 
 const SYSTEM = `You are a personal Telegram AI assistant.
@@ -136,6 +137,37 @@ async function tryFastPath(
       "",
       "Shortcuts: /today /tasks /emails /research /help",
     ].join("\n");
+  }
+
+  // Lightweight reminder without LLM
+  const remindMatch = text.match(
+    /^(?:напомни|remind(?:\s+me)?)\s+(.+)$/i
+  );
+  if (remindMatch) {
+    const rest = remindMatch[1].trim();
+    // split time phrase from text when possible
+    const whenGuess =
+      rest.match(
+        /((?:через|in)\s+\d+\s+\S+|(?:завтра|tomorrow|сегодня|today|в\s+пятниц\S*|friday|monday|вторник|среду|четверг|субботу|воскресенье)(?:\s+в?\s*\d{1,2}[:.]\d{2})?|(?:\d{1,2}[:.]\d{2}))/i
+      )?.[1] ?? rest;
+    let body = rest;
+    if (whenGuess && rest.toLowerCase().startsWith(whenGuess.toLowerCase())) {
+      body = rest.slice(whenGuess.length).trim().replace(/^[,:\-–]\s*/, "") || rest;
+    }
+    const at = parseRelativeTime(whenGuess, user.timezone);
+    const reminder = await createReminder({
+      userId: user.id,
+      text: body || rest,
+      remindAt: at.toISOString(),
+    });
+    return `Ок. Напомню ${at.toLocaleString("ru-RU")}: ${reminder.text}`;
+  }
+
+  // Lightweight task create
+  const taskMatch = text.match(/^(?:задача|добавь задачу|todo)\s*[:\-]?\s*(.+)$/i);
+  if (taskMatch) {
+    const task = await createTask({ userId: user.id, title: taskMatch[1].trim() });
+    return `Задача создана: ${task.title}`;
   }
 
   // Lightweight research shortcut

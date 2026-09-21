@@ -9,7 +9,8 @@ import {
   searchEmails,
   analyzeAndStore,
 } from "@/lib/gmail";
-import { getDb } from "@/lib/db/client";
+import { getDb, isDbConfigured } from "@/lib/db/client";
+import { localDb } from "@/lib/db/local-store";
 import { formatEmailDigest, formatEmailNotification } from "@/lib/telegram/format";
 import { runResearch, webSearch } from "@/lib/research/search";
 import { addMemory, forgetMemory, listMemory, clearAllMemory } from "@/lib/db/users";
