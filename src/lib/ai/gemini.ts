@@ -18,24 +18,46 @@ export function isGeminiConfigured() {
   return Boolean(getEnv().GEMINI_API_KEY);
 }
 
-function modelName() {
-  return getEnv().GEMINI_MODEL || "gemini-3.6-flash";
+/** Prefer stable aliases; 3.6-flash often 503 under load. */
+function modelCandidates(): string[] {
+  const preferred = getEnv().GEMINI_MODEL || "gemini-flash-latest";
+  const fallbacks = [
+    "gemini-flash-latest",
+    "gemini-3-flash-preview",
+    "gemini-3.6-flash",
+  ];
+  return [...new Set([preferred, ...fallbacks])];
 }
 
-async function withRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+function isRetryable(msg: string) {
+  return /503|429|high demand|unavailable|overloaded|try again|Resource exhausted/i.test(
+    msg
+  );
+}
+
+async function withModelFallback<T>(
+  run: (modelName: string) => Promise<T>
+): Promise<T> {
   let lastErr: unknown;
-  for (let i = 0; i < attempts; i++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastErr = err;
-      const msg = err instanceof Error ? err.message : String(err);
-      const retryable = /503|429|high demand|unavailable|overloaded|try again/i.test(msg);
-      if (!retryable || i === attempts - 1) throw err;
-      await new Promise((r) => setTimeout(r, 800 * (i + 1)));
+  for (const modelName of modelCandidates()) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        return await run(modelName);
+      } catch (err) {
+        lastErr = err;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!isRetryable(msg)) break; // try next model only for capacity errors? also try next on 404
+        if (/404|not found|no longer available/i.test(msg)) break;
+        await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
+      }
     }
   }
-  throw lastErr;
+  const msg = lastErr instanceof Error ? lastErr.message : "Gemini failed";
+  throw new Error(
+    /503|high demand|overloaded/i.test(msg)
+      ? "Gemini перегружен. Попробуй через минуту или напиши простую команду: /start, помощь, напомни…"
+      : msg
+  );
 }
 
 export async function generateText(opts: {
@@ -43,9 +65,9 @@ export async function generateText(opts: {
   prompt: string;
   maxOutputTokens?: number;
 }): Promise<string> {
-  return withRetry(async () => {
+  return withModelFallback(async (modelName) => {
     const model = getClient().getGenerativeModel({
-      model: modelName(),
+      model: modelName,
       systemInstruction: opts.system,
     });
     const result = await model.generateContent({
@@ -97,12 +119,12 @@ export async function runWithTools(opts: {
   executeTool: (name: string, args: Record<string, unknown>) => Promise<unknown>;
   maxSteps?: number;
 }): Promise<string> {
-  return withRetry(async () => {
+  return withModelFallback(async (modelName) => {
     const genAI = getClient();
     const tool: Tool = { functionDeclarations: opts.tools };
 
     const model = genAI.getGenerativeModel({
-      model: modelName(),
+      model: modelName,
       systemInstruction: opts.system,
       tools: [tool],
     });

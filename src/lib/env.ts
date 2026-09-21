@@ -53,7 +53,7 @@ export function getEnv(): AppEnv {
     GOOGLE_REDIRECT_URI: httpUrl(process.env.GOOGLE_REDIRECT_URI),
     GMAIL_PUBSUB_TOPIC: str(process.env.GMAIL_PUBSUB_TOPIC),
     GEMINI_API_KEY: str(process.env.GEMINI_API_KEY),
-    GEMINI_MODEL: str(process.env.GEMINI_MODEL) || "gemini-3.6-flash",
+    GEMINI_MODEL: str(process.env.GEMINI_MODEL) || "gemini-flash-latest",
     SUPABASE_URL:
       httpUrl(process.env.SUPABASE_URL) ||
       httpUrl(process.env.NEXT_PUBLIC_SUPABASE_URL),
