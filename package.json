@@ -9,7 +9,8 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "poll": "tsx scripts/telegram-poll.ts",
-    "dev:all": "echo run npm run dev and keep tunnel"
+    "dev:all": "echo run npm run dev and keep tunnel",
+    "email-poll": "tsx scripts/email-poll-loop.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

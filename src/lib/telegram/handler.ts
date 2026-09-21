@@ -7,6 +7,7 @@ import {
   sendMessage,
   answerCallback,
   editMessage,
+  sendChatAction,
 } from "@/lib/telegram/client";
 import {
   mainMenuKeyboard,
@@ -117,6 +118,9 @@ async function handleMessageInner(message: {
 
   const { user, settings, isNew } = userPack;
 
+  // Show typing ASAP so chat feels alive even while AI/Gmail work
+  void sendChatAction(message.chat.id, "typing");
+
   if (text === "/start" || isNew) {
     try {
       const lines = [
@@ -164,10 +168,11 @@ async function handleMessageInner(message: {
       return;
     }
     try {
+      void sendChatAction(message.chat.id, "typing");
       const result = (await executeTool({ user, settings }, "get_emails", {
         today_only: /сегодня|today/i.test(text) || text === "/emails",
         analyze: true,
-        max: 12,
+        max: 8,
       })) as {
         digest?: string;
         emails?: Array<{ id: string; priority: string; action_required: string }>;
@@ -189,9 +194,15 @@ async function handleMessageInner(message: {
         return;
       }
       await sendMessage(message.chat.id, result.digest ?? "Нет писем.");
-      const importants = (result.emails ?? []).filter((e) => e.priority === "high").slice(0, 3);
+      // Only expand top 2 high-priority — keep replies snappy
+      const importants = (result.emails ?? [])
+        .filter((e) => e.priority === "high")
+        .slice(0, 2);
       for (const e of importants) {
-        const detailed = await executeTool({ user, settings }, "get_email", { email_id: e.id });
+        void sendChatAction(message.chat.id, "typing");
+        const detailed = await executeTool({ user, settings }, "get_email", {
+          email_id: e.id,
+        });
         const formatted = (detailed as { formatted?: string }).formatted;
         if (formatted) {
           await sendMessage(message.chat.id, formatted, {

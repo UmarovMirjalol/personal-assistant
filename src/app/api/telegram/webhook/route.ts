@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { getEnv } from "@/lib/env";
 import { telegramUpdateSchema } from "@/lib/security/validate";
 import { processTelegramUpdate } from "@/lib/telegram/handler";
@@ -7,6 +8,10 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+/**
+ * CRITICAL: Telegram kills webhooks that take > ~60s.
+ * Always ACK immediately, then process in the background.
+ */
 export async function POST(req: NextRequest) {
   const secret = getEnv().TELEGRAM_WEBHOOK_SECRET;
   if (secret) {
@@ -28,27 +33,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "invalid_update" }, { status: 400 });
   }
 
-  try {
-    await processTelegramUpdate(parsed.data);
-  } catch {
-    const chatId =
-      parsed.data.message?.chat.id ?? parsed.data.callback_query?.message?.chat.id;
-    if (chatId) {
-      try {
-        const { sendMessage } = await import("@/lib/telegram/client");
-        await sendMessage(
-          chatId,
-          "Секунду подтупил. Напиши ещё раз — я на связи."
-        );
-      } catch {
-        // ignore
+  const update = parsed.data;
+  const debug = req.nextUrl.searchParams.get("debug") === "1";
+
+  after(async () => {
+    try {
+      await processTelegramUpdate(update);
+    } catch (err) {
+      const chatId =
+        update.message?.chat.id ?? update.callback_query?.message?.chat.id;
+      if (chatId) {
+        try {
+          const { sendMessage } = await import("@/lib/telegram/client");
+          await sendMessage(chatId, "Секунду подтупил. Напиши ещё раз — я на связи.");
+        } catch {
+          // ignore
+        }
+      }
+      if (debug) {
+        console.error("telegram webhook handler failed", err);
       }
     }
-    if (req.nextUrl.searchParams.get("debug") === "1") {
-      return NextResponse.json({ ok: false, error: "handler_failed" });
-    }
-    return NextResponse.json({ ok: true });
-  }
+  });
 
   return NextResponse.json({ ok: true });
 }

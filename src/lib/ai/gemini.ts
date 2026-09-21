@@ -18,19 +18,24 @@ export function isGeminiConfigured() {
   return Boolean(getEnv().GEMINI_API_KEY);
 }
 
-/** Prefer stable aliases; 3.6-flash often 503 under load. */
+/** Prefer free-tier-friendly stable models; skip exhausted ones via fallback. */
 function modelCandidates(): string[] {
-  const preferred = getEnv().GEMINI_MODEL || "gemini-flash-latest";
+  const preferred = getEnv().GEMINI_MODEL || "gemini-2.5-flash";
   const fallbacks = [
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-flash-lite-latest",
     "gemini-flash-latest",
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.1-flash-lite",
     "gemini-3-flash-preview",
-    "gemini-3.6-flash",
   ];
   return [...new Set([preferred, ...fallbacks])];
 }
 
 function isRetryable(msg: string) {
-  return /503|429|high demand|unavailable|overloaded|try again|Resource exhausted/i.test(
+  return /503|429|high demand|unavailable|overloaded|try again|Resource exhausted|Too Many Requests|quota/i.test(
     msg
   );
 }
@@ -46,15 +51,18 @@ async function withModelFallback<T>(
       } catch (err) {
         lastErr = err;
         const msg = err instanceof Error ? err.message : String(err);
-        // Always try next model on capacity / missing model
+        // Always try next model on capacity / missing / quota
         if (/404|not found|no longer available/i.test(msg)) break;
+        if (/429|quota|Too Many Requests|Resource exhausted/i.test(msg)) {
+          // Don't burn retries on hard quota — jump to next model
+          break;
+        }
         if (!isRetryable(msg) && attempt === 0) {
-          // one quick retry even for flaky parse/network
-          await new Promise((r) => setTimeout(r, 400));
+          await new Promise((r) => setTimeout(r, 300));
           continue;
         }
         if (!isRetryable(msg)) break;
-        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+        await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
       }
     }
   }

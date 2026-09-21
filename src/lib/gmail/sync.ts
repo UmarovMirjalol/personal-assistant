@@ -13,9 +13,9 @@ import { afterImportantKeyboard } from "@/lib/telegram/keyboards";
 
 export async function processNewEmailsForUser(
   user: User,
-  opts: { mode?: "poll" | "push"; max?: number } = {}
-): Promise<{ processed: number; notified: number }> {
-  if (!isGmailConnected(user)) return { processed: 0, notified: 0 };
+  opts: { mode?: "poll" | "push"; max?: number; forceNotify?: boolean } = {}
+): Promise<{ processed: number; notified: number; skipped: number }> {
+  if (!isGmailConnected(user)) return { processed: 0, notified: 0, skipped: 0 };
 
   const settings = await getSettings(user.id);
   let gmailIds: string[] = [];
@@ -29,9 +29,10 @@ export async function processNewEmailsForUser(
       gmailIds = hist;
     }
   } else {
+    // Last 24 hours — frequent polling still skips already-notified rows
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const recent = await listRecentEmails(user, {
-      max: opts.max ?? settings.max_emails_per_analysis,
+      max: opts.max ?? Math.min(settings.max_emails_per_analysis, 10),
       after: since,
       query: "in:inbox",
     });
@@ -41,8 +42,9 @@ export async function processNewEmailsForUser(
   const db = getDb();
   let processed = 0;
   let notified = 0;
+  let skipped = 0;
 
-  for (const id of gmailIds.slice(0, opts.max ?? 15)) {
+  for (const id of gmailIds.slice(0, opts.max ?? 10)) {
     const { data: existingEmail } = await db
       .from("emails")
       .select("id")
@@ -56,14 +58,21 @@ export async function processNewEmailsForUser(
         .select("*")
         .eq("email_id", existingEmail.id)
         .maybeSingle();
-      if (existingSummary?.notified) continue;
+      if (existingSummary?.notified) {
+        skipped += 1;
+        continue;
+      }
     }
 
     const parsed = await getEmailByGmailId(user, id);
     const { rowId, summary, analysis } = await analyzeAndStore(user, parsed);
     processed += 1;
 
-    if (shouldNotify(analysis.priority, settings.notify_email_priority) && !summary.notified) {
+    const notify =
+      opts.forceNotify ||
+      shouldNotify(analysis.priority, settings.notify_email_priority);
+
+    if (notify && !summary.notified) {
       const text = formatEmailNotification({
         fromName: parsed.fromName,
         fromEmail: parsed.fromEmail,
@@ -79,11 +88,13 @@ export async function processNewEmailsForUser(
       await db.from("email_summaries").update({ notified: true }).eq("id", summary.id);
       notified += 1;
     } else if (!summary.notified) {
+      // Mark low-priority as notified so we don't keep re-analyzing forever
       await db.from("email_summaries").update({ notified: true }).eq("id", summary.id);
+      skipped += 1;
     }
   }
 
-  return { processed, notified };
+  return { processed, notified, skipped };
 }
 
 export async function processAllConnectedUsers() {
@@ -97,9 +108,17 @@ export async function processAllConnectedUsers() {
   for (const user of users ?? []) {
     try {
       const r = await processNewEmailsForUser(user, { mode: "poll" });
-      results.push({ userId: user.id, ...r });
-    } catch {
-      results.push({ userId: user.id, processed: 0, notified: 0, error: true });
+      results.push({ userId: user.id, email: user.gmail_email, ...r });
+    } catch (err) {
+      results.push({
+        userId: user.id,
+        email: user.gmail_email,
+        processed: 0,
+        notified: 0,
+        skipped: 0,
+        error: true,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      });
     }
   }
   return results;

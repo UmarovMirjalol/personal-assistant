@@ -27,34 +27,43 @@ export function formatEmailNotification(input: {
       ? `${input.fromName} <${input.fromEmail}>`
       : input.fromName || input.fromEmail || "Unknown";
 
+  const priority = (input.summary.priority || "medium") as keyof typeof PRIORITY_ICON;
+  const icon = PRIORITY_ICON[priority] ?? "🟡";
+  const urgency = (input.summary.urgency || priority || "medium").toString().toUpperCase();
+
   const wants = (input.summary.what_they_want ?? [])
+    .filter(Boolean)
     .map((w) => `• ${w}`)
     .join("\n");
 
   const lines = [
-    "📩 NEW EMAIL",
+    `${icon} Новое письмо · ${urgency}`,
     "",
-    `From: ${from}`,
-    `Subject: ${input.subject ?? "(no subject)"}`,
+    `От: ${from}`,
+    `Тема: ${input.subject ?? "(без темы)"}`,
     "",
-    "PURPOSE:",
-    input.summary.purpose ?? "Not clear",
-    "",
-    "WHAT THEY WANT FROM ME:",
-    wants || "• None specified",
-    "",
-    `ACTION REQUIRED:\n${input.summary.action_required ?? "None"}`,
-    "",
-    `DEADLINE:\n${input.summary.deadline || "Not specified"}`,
-    "",
-    `URGENCY:\n${(input.summary.urgency || input.summary.priority || "medium").toUpperCase()}`,
-    "",
-    "SUMMARY:",
-    input.summary.summary ?? "",
+    `Суть: ${input.summary.purpose || input.summary.summary || "неясно"}`,
   ];
 
+  if (input.summary.summary && input.summary.summary !== input.summary.purpose) {
+    lines.push("", input.summary.summary);
+  }
+
+  if (wants) {
+    lines.push("", "Что хотят:", wants);
+  }
+
+  const action = input.summary.action_required;
+  if (action && action !== "None") {
+    lines.push("", `Действие: ${action}`);
+  }
+
+  if (input.summary.deadline && input.summary.deadline !== "Not specified") {
+    lines.push(`Дедлайн: ${input.summary.deadline}`);
+  }
+
   if (input.summary.uncertain) {
-    lines.push("", `UNCERTAIN:\n${input.summary.uncertain}`);
+    lines.push("", `Неуверен: ${input.summary.uncertain}`);
   }
 
   return lines.join("\n");

@@ -3,6 +3,7 @@ import { generateJson } from "@/lib/ai/gemini";
 import type { ParsedEmail } from "@/lib/gmail/client";
 import { getDb, type EmailSummary, type User } from "@/lib/db/client";
 import { upsertEmailRecord } from "@/lib/gmail/client";
+import { heuristicAnalyze } from "@/lib/gmail/heuristic";
 
 const analysisSchema = z.object({
   priority: z.enum(["high", "medium", "low"]),
@@ -34,9 +35,9 @@ Rules:
   HIGH: admissions, professor/research opportunity, scholarship, deadline, interview, application issue, urgent work request
   MEDIUM: normal work request, useful update, networking, potentially important
   LOW: newsletters, promotions, automated notifications, obvious spam
-- summary: 2-3 simple sentences
+- summary: 2-3 simple sentences in Russian if the user context is Russian
 - purpose: one clear sentence about intent
-- Be concise. Prefer the user's language if the email is in Russian; otherwise English is fine for structure labels (caller formats).`;
+- Be concise.`;
 
 export async function analyzeEmail(email: ParsedEmail): Promise<EmailAnalysis> {
   const prompt = `Analyze this email:
@@ -47,13 +48,21 @@ Received: ${email.receivedAt ?? ""}
 Body:
 ${email.bodyExcerpt.slice(0, 4500)}`;
 
-  return generateJson({
-    system: SYSTEM,
-    prompt,
-    schema: analysisSchema,
-    // Cheap model usage: short outputs
-    maxOutputTokens: 800,
-  });
+  try {
+    return await Promise.race([
+      generateJson({
+        system: SYSTEM,
+        prompt,
+        schema: analysisSchema,
+        maxOutputTokens: 700,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("analyze_timeout")), 18_000)
+      ),
+    ]);
+  } catch {
+    return heuristicAnalyze(email);
+  }
 }
 
 export async function analyzeAndStore(

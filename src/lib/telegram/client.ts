@@ -56,6 +56,17 @@ export async function editMessage(
   } as Parameters<Bot["api"]["editMessageText"]>[3]);
 }
 
+export async function sendChatAction(
+  chatId: number,
+  action: "typing" | "upload_document" = "typing"
+) {
+  try {
+    await getBot().api.sendChatAction(chatId, action);
+  } catch {
+    // ignore
+  }
+}
+
 export function webhookPath(): string {
   const secret = getEnv().TELEGRAM_WEBHOOK_SECRET;
   if (!secret) return "/api/telegram/webhook";
